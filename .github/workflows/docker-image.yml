@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_REPO: ghcr.io/312022151125/cliproxyapi
+  IMAGE_REPO: ghcr.io/nhohere/cliproxyapi
 
 permissions:
   contents: read
