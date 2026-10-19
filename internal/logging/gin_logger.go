@@ -112,7 +112,7 @@ func GinLogrusLogger() gin.HandlerFunc {
 }
 
 // buildRequestLogLine renders the per-request access log line. It mirrors
-// fmt.Sprintf("%3d | %13v | %15s | %-7s \"%s\"", ...) without reflection.
+// fmt.Sprintf("%3d | %13v | %15s | %-7s %q", ...) without reflection.
 func buildRequestLogLine(statusCode int, latency, clientIP, method, path string) string {
 	var sb strings.Builder
 	sb.Grow(len(path) + len(method) + len(clientIP) + len(latency) + 32)
@@ -128,9 +128,9 @@ func buildRequestLogLine(statusCode int, latency, clientIP, method, path string)
 	writePaddedLeft(&sb, clientIP, 15)
 	sb.WriteString(" | ")
 	writePaddedRight(&sb, method, 7)
-	sb.WriteString(" \"")
-	sb.WriteString(path)
-	sb.WriteString("\"")
+	sb.WriteString(" ")
+	// Quote the path so control characters cannot forge extra log lines.
+	sb.WriteString(strconv.Quote(path))
 	return sb.String()
 }
 
