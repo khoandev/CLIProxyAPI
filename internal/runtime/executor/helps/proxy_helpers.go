@@ -41,12 +41,12 @@ func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 
 	// If we have a proxy URL configured, set up the transport
 	if proxyURL != "" {
-		transport := buildProxyTransport(proxyURL)
+		transport := cachedProxyTransport(proxyURL, auth)
 		if transport != nil {
 			httpClient.Transport = transport
 			return httpClient
 		}
-		// If proxy setup failed, log and fall through to context RoundTripper
+		// If proxy setup failed, log and fall through to context transport
 		log.Debugf("failed to setup proxy from URL: %s, falling back to context transport", proxyutil.Redact(proxyURL))
 	}
 
@@ -59,6 +59,70 @@ func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 }
 
 var devinTransportCache = NewTransportCache[string](DefaultTransportCacheCapacity)
+
+// proxyTransportKey identifies one upstream connection pool.
+//
+// The credential is part of the key because different OAuth identities must
+// not share a TCP or TLS connection: the native clients this project mirrors
+// keep one credential per process, and a shared connection would merge their
+// wire fingerprints.
+type proxyTransportKey struct {
+	proxy      string
+	credential string
+}
+
+// proxyTransportCache reuses upstream connection pools per proxy setting.
+//
+// Building a transport per request defeats connection reuse: every request
+// paid a fresh TCP plus TLS handshake, and the discarded transport kept its
+// idle connection and pool goroutines alive until the idle timeout expired.
+// The cache keeps one pool per proxy setting and credential so repeated
+// requests reuse the same connections.
+var proxyTransportCache = NewTransportCache[proxyTransportKey](DefaultTransportCacheCapacity)
+
+// cachedProxyTransport returns the shared transport for the given proxy URL and
+// credential scope.
+func cachedProxyTransport(proxyURL string, auth *cliproxyauth.Auth) *http.Transport {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return nil
+	}
+	key := proxyTransportKey{proxy: proxyURL, credential: proxyCredentialScope(auth)}
+	transport, errGet := proxyTransportCache.Get(key, func() (*http.Transport, error) {
+		built := buildProxyTransport(proxyURL)
+		if built == nil {
+			return nil, fmt.Errorf("proxy setting %q produced no transport", proxyutil.Redact(proxyURL))
+		}
+		return built, nil
+	})
+	if errGet != nil {
+		log.Debugf("proxy transport cache miss: %v", errGet)
+		return nil
+	}
+	return transport
+}
+
+// proxyCredentialScope returns a stable identifier for the credential that
+// owns a connection pool. Runtime auths carry an ID; incomplete auth objects
+// fall back to another stable marker so they neither share a pool with an
+// unrelated OAuth identity nor allocate a fresh pool on every request.
+func proxyCredentialScope(auth *cliproxyauth.Auth) string {
+	if auth == nil {
+		return "anonymous"
+	}
+	if id := strings.TrimSpace(auth.ID); id != "" {
+		return "id:" + id
+	}
+	if auth.Attributes != nil {
+		if path := strings.TrimSpace(auth.Attributes[cliproxyauth.AttributePath]); path != "" {
+			return "path:" + path
+		}
+		if source := strings.TrimSpace(auth.Attributes[cliproxyauth.AttributeSource]); source != "" {
+			return "source:" + source
+		}
+	}
+	return "anonymous"
+}
 
 // NewDevinHTTPClient creates an HTTP client customized for Devin Connect-RPC upstream.
 // Suppresses automatic Accept-Encoding: gzip while preserving connection reuse across requests.
