@@ -60,7 +60,7 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 	out, _ = sjson.SetBytes(out, "metadata.user_id", userID)
 	out, _ = sjson.SetBytes(out, "max_tokens", defaultClaudeChatMaxTokensForModel(modelName))
 
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 
 	// Convert OpenAI reasoning_effort to Claude thinking config.
 	if v := root.Get("reasoning_effort"); v.Exists() {

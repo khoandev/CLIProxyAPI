@@ -1,6 +1,7 @@
 package common
 
 import (
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -25,7 +26,7 @@ func (a *ClaudeMessageAccumulator) Append(message []byte) {
 	if len(message) == 0 {
 		return
 	}
-	root := gjson.ParseBytes(message)
+	root := util.ParseGJSONBytesNoCopy(message)
 	role := root.Get("role").String()
 	if role != "user" && role != "assistant" {
 		return
