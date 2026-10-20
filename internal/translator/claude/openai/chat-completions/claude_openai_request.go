@@ -334,9 +334,9 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 	if len(systemBlocks) > 0 {
 		out, _ = sjson.SetRawBytes(out, "system", common.JoinRawArray(systemBlocks))
 	}
-	if len(messageBlocks) > 0 {
-		out = common.SetRawArrayItems(out, "messages", messageBlocks)
-	}
+	// The messages are spliced in at the end of the build, once every other
+	// field is set. Writing a field rewrites the whole document, so doing it
+	// before the messages are in would copy the conversation again per field.
 
 	// Tools mapping: OpenAI tools -> Claude Code tools
 	allowedToolNames := make(map[string]struct{})
@@ -476,6 +476,10 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 		} else if gjson.GetBytes(out, "tools").Exists() {
 			out, _ = sjson.SetRawBytes(out, "tool_choice", []byte(`{"type":"auto","disable_parallel_tool_use":true}`))
 		}
+	}
+
+	if len(messageBlocks) > 0 {
+		out = common.SetRawArrayItems(out, "messages", messageBlocks)
 	}
 
 	return thinking.ApplyTranslatedSummaryToClaude(out, rawJSON, "openai", modelName), nothingLeftErr
