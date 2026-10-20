@@ -151,6 +151,36 @@ func maskRuleSetForRequest(c *gin.Context) maskRuleSet {
 	return brandOnlySet
 }
 
+// requestBodyModelContextKey caches the request body model for one request.
+const requestBodyModelContextKey = "cpa.masking.requestBodyModel"
+
+// requestBodyModel returns the "model" field of the request body.
+//
+// Both the antigravity check and the profile check need it, and the body can be
+// several megabytes, so the body is read and the model extracted only once per
+// request. The body is restored afterwards so downstream handlers still read
+// the full payload.
+func requestBodyModel(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	if cached, ok := c.Get(requestBodyModelContextKey); ok {
+		model, _ := cached.(string)
+		return model
+	}
+	model := ""
+	if c.Request != nil && c.Request.Body != nil {
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err == nil {
+			// Restore the body so downstream handlers and middleware can read it.
+			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			model = gjson.GetBytes(bodyBytes, "model").String()
+		}
+	}
+	c.Set(requestBodyModelContextKey, model)
+	return model
+}
+
 // maskingResponseWriter intercepts Write/WriteString to transform the response
 // body before it reaches the client. It also removes Content-Length because the
 // transformations change byte length; Go's HTTP server then uses chunked encoding.
@@ -248,15 +278,8 @@ func maskProfileForRequest(c *gin.Context) (maskProfile, bool) {
 	}
 
 	// 3. JSON request body for `model` field
-	if c.Request.Body != nil {
-		bodyBytes, err := io.ReadAll(c.Request.Body)
-		if err == nil {
-			// Restore the body so downstream handlers and middleware can read it.
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-			if profile, ok := profileForModel(gjson.GetBytes(bodyBytes, "model").String()); ok {
-				return profile, true
-			}
-		}
+	if profile, ok := profileForModel(requestBodyModel(c)); ok {
+		return profile, true
 	}
 
 	return maskProfile{}, false
@@ -312,16 +335,8 @@ func shouldMaskAntigravityRequest(c *gin.Context) bool {
 	}
 
 	// 3. Check JSON request body for `model` field
-	if c.Request.Body != nil {
-		bodyBytes, err := io.ReadAll(c.Request.Body)
-		if err == nil {
-			// Restore the body so downstream handlers and middleware can read it.
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-			model := gjson.GetBytes(bodyBytes, "model").String()
-			if isGeminiModel(model) {
-				return true
-			}
-		}
+	if isGeminiModel(requestBodyModel(c)) {
+		return true
 	}
 
 	return false
