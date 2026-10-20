@@ -24,6 +24,11 @@ const (
 	// continuity. Oldest entries are evicted first.
 	XAIReasoningReplayCacheMaxEntries = 10240
 
+	// XAIReasoningReplayCacheMaxTotalBytes bounds the aggregate in-process
+	// replay content. The entry limit alone does not bound memory on a host
+	// with a small RAM budget, so the cache also has a byte ceiling.
+	XAIReasoningReplayCacheMaxTotalBytes = 256 << 20
+
 	// XAIReasoningReplayCacheEvictBatchSize leaves headroom after the cache
 	// reaches capacity so high write volume does not rescan the map every turn.
 	XAIReasoningReplayCacheEvictBatchSize = 128
@@ -37,6 +42,9 @@ type xaiReasoningReplayEntry struct {
 var (
 	xaiReasoningReplayMu      sync.Mutex
 	xaiReasoningReplayEntries = make(map[string]xaiReasoningReplayEntry)
+	// xaiReasoningReplayTotalBytes tracks the aggregate size of the cached
+	// replay items so the cache can be bounded by bytes as well as entries.
+	xaiReasoningReplayTotalBytes int
 )
 
 type xaiReasoningReplayKVClient interface {
@@ -121,13 +129,13 @@ func StoreXAIReasoningReplayItems(ctx context.Context, modelName, sessionKey str
 	now := time.Now()
 	xaiReasoningReplayMu.Lock()
 	defer xaiReasoningReplayMu.Unlock()
+	xaiReasoningReplayTotalBytes -= xaiReasoningReplayEntryBytes(xaiReasoningReplayEntries[key].Items)
 	xaiReasoningReplayEntries[key] = xaiReasoningReplayEntry{
 		Items:     normalized,
 		Timestamp: now,
 	}
-	if len(xaiReasoningReplayEntries) > XAIReasoningReplayCacheMaxEntries {
-		evictOldestXAIReasoningReplayEntriesLocked(XAIReasoningReplayCacheEvictBatchSize)
-	}
+	xaiReasoningReplayTotalBytes += xaiReasoningReplayEntryBytes(normalized)
+	enforceXAIReasoningReplayLimitsLocked()
 	return XAIReasoningReplayStored
 }
 
@@ -183,6 +191,7 @@ func GetXAIReasoningReplayItemsRequired(ctx context.Context, modelName, sessionK
 		return nil, false, nil
 	}
 	if now.Sub(entry.Timestamp) > XAIReasoningReplayCacheTTL {
+		xaiReasoningReplayTotalBytes -= xaiReasoningReplayEntryBytes(entry.Items)
 		delete(xaiReasoningReplayEntries, key)
 		return nil, false, nil
 	}
@@ -214,6 +223,7 @@ func DeleteXAIReasoningReplayItemRequired(ctx context.Context, modelName, sessio
 		return errDel
 	}
 	xaiReasoningReplayMu.Lock()
+	xaiReasoningReplayTotalBytes -= xaiReasoningReplayEntryBytes(xaiReasoningReplayEntries[key].Items)
 	delete(xaiReasoningReplayEntries, key)
 	xaiReasoningReplayMu.Unlock()
 	return nil
@@ -223,6 +233,7 @@ func DeleteXAIReasoningReplayItemRequired(ctx context.Context, modelName, sessio
 func ClearXAIReasoningReplayCache() {
 	xaiReasoningReplayMu.Lock()
 	xaiReasoningReplayEntries = make(map[string]xaiReasoningReplayEntry)
+	xaiReasoningReplayTotalBytes = 0
 	xaiReasoningReplayMu.Unlock()
 }
 
@@ -398,8 +409,30 @@ func evictOldestXAIReasoningReplayEntriesLocked(count int) {
 	if count > len(candidates) {
 		count = len(candidates)
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
+		xaiReasoningReplayTotalBytes -= xaiReasoningReplayEntryBytes(xaiReasoningReplayEntries[candidates[i].key].Items)
 		delete(xaiReasoningReplayEntries, candidates[i].key)
+	}
+}
+
+// xaiReasoningReplayEntryBytes reports the serialized size of one entry.
+func xaiReasoningReplayEntryBytes(items [][]byte) int {
+	total := 0
+	for _, item := range items {
+		total += len(item)
+	}
+	return total
+}
+
+// enforceXAIReasoningReplayLimitsLocked evicts the oldest entries until the
+// cache fits both the entry count and the aggregate byte budget.
+func enforceXAIReasoningReplayLimitsLocked() {
+	for len(xaiReasoningReplayEntries) > XAIReasoningReplayCacheMaxEntries || xaiReasoningReplayTotalBytes > XAIReasoningReplayCacheMaxTotalBytes {
+		if len(xaiReasoningReplayEntries) == 0 {
+			xaiReasoningReplayTotalBytes = 0
+			return
+		}
+		evictOldestXAIReasoningReplayEntriesLocked(XAIReasoningReplayCacheEvictBatchSize)
 	}
 }
 
@@ -407,6 +440,7 @@ func purgeExpiredXAIReasoningReplayCache(now time.Time) {
 	xaiReasoningReplayMu.Lock()
 	for key, entry := range xaiReasoningReplayEntries {
 		if now.Sub(entry.Timestamp) > XAIReasoningReplayCacheTTL {
+			xaiReasoningReplayTotalBytes -= xaiReasoningReplayEntryBytes(entry.Items)
 			delete(xaiReasoningReplayEntries, key)
 		}
 	}

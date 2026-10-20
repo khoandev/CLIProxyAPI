@@ -33,6 +33,12 @@ const (
 	// CodexReasoningReplayCacheMaxBytesPerEntry bounds cumulative serialized items for one agent.
 	CodexReasoningReplayCacheMaxBytesPerEntry = 16 << 20
 
+	// CodexReasoningReplayCacheMaxTotalBytes bounds the aggregate in-process
+	// replay content. The per-entry bound alone does not bound the cache: with
+	// the entry limit reached, the cache could hold terabytes of reasoning
+	// items and exhaust the host. Low-memory deployments need a hard ceiling.
+	CodexReasoningReplayCacheMaxTotalBytes = 256 << 20
+
 	// CodexReasoningReplayCacheEvictBatchSize leaves headroom after the cache
 	// reaches capacity so high write volume does not rescan the map every turn.
 	CodexReasoningReplayCacheEvictBatchSize = 128
@@ -46,6 +52,9 @@ type codexReasoningReplayEntry struct {
 var (
 	codexReasoningReplayMu      sync.Mutex
 	codexReasoningReplayEntries = make(map[string]codexReasoningReplayEntry)
+	// codexReasoningReplayTotalBytes tracks the aggregate size of the cached
+	// replay items so the cache can be bounded by bytes as well as entries.
+	codexReasoningReplayTotalBytes int
 )
 
 type codexReasoningReplayKVClient interface {
@@ -105,13 +114,13 @@ func CacheCodexReasoningReplayItemsBestEffort(ctx context.Context, modelName, se
 	now := time.Now()
 	codexReasoningReplayMu.Lock()
 	defer codexReasoningReplayMu.Unlock()
+	codexReasoningReplayTotalBytes -= codexReasoningReplayEntryBytes(codexReasoningReplayEntries[key].Items)
 	codexReasoningReplayEntries[key] = codexReasoningReplayEntry{
 		Items:     normalized,
 		Timestamp: now,
 	}
-	if len(codexReasoningReplayEntries) > CodexReasoningReplayCacheMaxEntries {
-		evictOldestCodexReasoningReplayEntries(CodexReasoningReplayCacheEvictBatchSize)
-	}
+	codexReasoningReplayTotalBytes += codexReasoningReplayEntryBytes(normalized)
+	enforceCodexReasoningReplayLimitsLocked()
 	return true
 }
 
@@ -177,12 +186,12 @@ func AppendCodexReasoningReplayItemsBestEffort(ctx context.Context, modelName, s
 	if now.Sub(entry.Timestamp) > CodexReasoningReplayCacheTTL {
 		entry.Items = nil
 	}
+	codexReasoningReplayTotalBytes -= codexReasoningReplayEntryBytes(entry.Items)
 	entry.Items = appendCodexReasoningReplayTurn(entry.Items, normalized)
 	entry.Timestamp = now
 	codexReasoningReplayEntries[key] = entry
-	if len(codexReasoningReplayEntries) > CodexReasoningReplayCacheMaxEntries {
-		evictOldestCodexReasoningReplayEntries(CodexReasoningReplayCacheEvictBatchSize)
-	}
+	codexReasoningReplayTotalBytes += codexReasoningReplayEntryBytes(entry.Items)
+	enforceCodexReasoningReplayLimitsLocked()
 	codexReasoningReplayMu.Unlock()
 	return true
 }
@@ -286,6 +295,7 @@ func GetCodexReasoningReplayItemsRequired(ctx context.Context, modelName, sessio
 		return nil, false, nil
 	}
 	if now.Sub(entry.Timestamp) > CodexReasoningReplayCacheTTL {
+		codexReasoningReplayTotalBytes -= codexReasoningReplayEntryBytes(entry.Items)
 		delete(codexReasoningReplayEntries, key)
 		return nil, false, nil
 	}
@@ -317,6 +327,7 @@ func DeleteCodexReasoningReplayItemRequired(ctx context.Context, modelName, sess
 		return errDel
 	}
 	codexReasoningReplayMu.Lock()
+	codexReasoningReplayTotalBytes -= codexReasoningReplayEntryBytes(codexReasoningReplayEntries[key].Items)
 	delete(codexReasoningReplayEntries, key)
 	codexReasoningReplayMu.Unlock()
 	return nil
@@ -326,6 +337,7 @@ func DeleteCodexReasoningReplayItemRequired(ctx context.Context, modelName, sess
 func ClearCodexReasoningReplayCache() {
 	codexReasoningReplayMu.Lock()
 	codexReasoningReplayEntries = make(map[string]codexReasoningReplayEntry)
+	codexReasoningReplayTotalBytes = 0
 	codexReasoningReplayMu.Unlock()
 }
 
@@ -477,8 +489,30 @@ func evictOldestCodexReasoningReplayEntries(count int) {
 	if count > len(candidates) {
 		count = len(candidates)
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
+		codexReasoningReplayTotalBytes -= codexReasoningReplayEntryBytes(codexReasoningReplayEntries[candidates[i].key].Items)
 		delete(codexReasoningReplayEntries, candidates[i].key)
+	}
+}
+
+// codexReasoningReplayEntryBytes reports the serialized size of one entry.
+func codexReasoningReplayEntryBytes(items [][]byte) int {
+	total := 0
+	for _, item := range items {
+		total += len(item)
+	}
+	return total
+}
+
+// enforceCodexReasoningReplayLimitsLocked evicts the oldest entries until the
+// cache fits both the entry count and the aggregate byte budget.
+func enforceCodexReasoningReplayLimitsLocked() {
+	for len(codexReasoningReplayEntries) > CodexReasoningReplayCacheMaxEntries || codexReasoningReplayTotalBytes > CodexReasoningReplayCacheMaxTotalBytes {
+		if len(codexReasoningReplayEntries) == 0 {
+			codexReasoningReplayTotalBytes = 0
+			return
+		}
+		evictOldestCodexReasoningReplayEntries(CodexReasoningReplayCacheEvictBatchSize)
 	}
 }
 
@@ -486,6 +520,7 @@ func purgeExpiredCodexReasoningReplayCache(now time.Time) {
 	codexReasoningReplayMu.Lock()
 	for key, entry := range codexReasoningReplayEntries {
 		if now.Sub(entry.Timestamp) > CodexReasoningReplayCacheTTL {
+			codexReasoningReplayTotalBytes -= codexReasoningReplayEntryBytes(entry.Items)
 			delete(codexReasoningReplayEntries, key)
 		}
 	}

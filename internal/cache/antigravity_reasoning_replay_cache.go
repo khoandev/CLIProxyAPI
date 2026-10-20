@@ -38,6 +38,11 @@ const (
 	AntigravityReasoningReplayCacheMaxItemsPerEntry = 4096
 	AntigravityReasoningReplayCacheMaxBytesPerEntry = 16 << 20
 
+	// AntigravityReasoningReplayCacheMaxTotalBytes bounds the aggregate
+	// in-process replay content. The per-entry bound alone does not bound the
+	// cache, so a host with a small RAM budget needs a hard ceiling.
+	AntigravityReasoningReplayCacheMaxTotalBytes = 256 << 20
+
 	// JSON encodes each normalized []byte item as base64. Leave enough room for
 	// that expansion while rejecting oversized Home values before unmarshalling.
 	antigravityReasoningReplayCacheMaxSerializedBytes = 24 << 20
@@ -70,6 +75,9 @@ var (
 	antigravityReasoningReplayEntries       = make(map[string]antigravityReasoningReplayEntry)
 	antigravityReasoningReplayNextRevision  uint64
 	antigravityReasoningReplayEvictionEpoch uint64
+	// antigravityReasoningReplayTotalBytes tracks the aggregate size of the
+	// cached replay items so the cache can be bounded by bytes as well as entries.
+	antigravityReasoningReplayTotalBytes int
 )
 
 type antigravityReasoningReplayKVClient interface {
@@ -94,6 +102,39 @@ func CacheAntigravityReasoningReplayItem(modelName, sessionKey string, item []by
 // items needed to replay a stateless next turn.
 func CacheAntigravityReasoningReplayItems(modelName, sessionKey string, items [][]byte) bool {
 	return CacheAntigravityReasoningReplayItemsBestEffort(context.Background(), modelName, sessionKey, items)
+}
+
+// storeAntigravityReasoningReplayEntryLocked writes one entry and keeps the
+// aggregate byte counter in sync with the stored content.
+//
+// antigravityReasoningReplayMu must be held by the caller.
+func storeAntigravityReasoningReplayEntryLocked(key string, entry antigravityReasoningReplayEntry) {
+	antigravityReasoningReplayTotalBytes -= antigravityReasoningReplayEntryBytes(antigravityReasoningReplayEntries[key].Items)
+	antigravityReasoningReplayEntries[key] = entry
+	antigravityReasoningReplayTotalBytes += antigravityReasoningReplayEntryBytes(entry.Items)
+}
+
+// antigravityReasoningReplayEntryBytes reports the serialized size of one entry.
+func antigravityReasoningReplayEntryBytes(items [][]byte) int {
+	total := 0
+	for _, item := range items {
+		total += len(item)
+	}
+	return total
+}
+
+// enforceAntigravityReasoningReplayLimitsLocked evicts the oldest entries
+// until the cache fits both the entry count and the aggregate byte budget.
+//
+// antigravityReasoningReplayMu must be held by the caller.
+func enforceAntigravityReasoningReplayLimitsLocked() {
+	for len(antigravityReasoningReplayEntries) > AntigravityReasoningReplayCacheMaxEntries || antigravityReasoningReplayTotalBytes > AntigravityReasoningReplayCacheMaxTotalBytes {
+		if len(antigravityReasoningReplayEntries) == 0 {
+			antigravityReasoningReplayTotalBytes = 0
+			return
+		}
+		evictOldestAntigravityReasoningReplayEntries(AntigravityReasoningReplayCacheEvictBatchSize)
+	}
 }
 
 // CacheAntigravityReasoningReplayItemsBestEffort stores replay items for completed response paths.
@@ -129,15 +170,13 @@ func CacheAntigravityReasoningReplayItemsBestEffort(ctx context.Context, modelNa
 	antigravityReasoningReplayMu.Lock()
 	defer antigravityReasoningReplayMu.Unlock()
 	antigravityReasoningReplayNextRevision++
-	antigravityReasoningReplayEntries[key] = antigravityReasoningReplayEntry{
+	storeAntigravityReasoningReplayEntryLocked(key, antigravityReasoningReplayEntry{
 		Items:     normalized,
 		Timestamp: now,
 		Revision:  antigravityReasoningReplayNextRevision,
 		Branch:    newAntigravityReasoningReplayGeneration(),
-	}
-	if len(antigravityReasoningReplayEntries) > AntigravityReasoningReplayCacheMaxEntries {
-		evictOldestAntigravityReasoningReplayEntries(AntigravityReasoningReplayCacheEvictBatchSize)
-	}
+	})
+	enforceAntigravityReasoningReplayLimitsLocked()
 	return true
 }
 
@@ -237,6 +276,7 @@ func GetAntigravityReasoningReplayItemsWithSnapshotRequired(ctx context.Context,
 	}
 	if now.Sub(entry.Timestamp) > AntigravityReasoningReplayCacheTTL {
 		antigravityReasoningReplayEvictionEpoch++
+		antigravityReasoningReplayTotalBytes -= antigravityReasoningReplayEntryBytes(entry.Items)
 		delete(antigravityReasoningReplayEntries, key)
 		return nil, reserveAntigravityReasoningReplayAbsentLocked(key, now), false, nil
 	}
@@ -264,7 +304,8 @@ func reserveAntigravityReasoningReplayAbsentLocked(key string, now time.Time) An
 		Branch:    newAntigravityReasoningReplayGeneration(),
 		Deleted:   true,
 	}
-	antigravityReasoningReplayEntries[key] = entry
+	storeAntigravityReasoningReplayEntryLocked(key, entry)
+	enforceAntigravityReasoningReplayLimitsLocked()
 	return AntigravityReasoningReplaySnapshot{
 		loaded:        true,
 		found:         true,
@@ -345,10 +386,8 @@ func ReplaceAntigravityReasoningReplayItemsIfUnchanged(ctx context.Context, mode
 		branch = newAntigravityReasoningReplayGeneration()
 	}
 	antigravityReasoningReplayNextRevision++
-	antigravityReasoningReplayEntries[key] = antigravityReasoningReplayEntry{Items: normalized, Timestamp: now, Revision: antigravityReasoningReplayNextRevision, Branch: branch}
-	if len(antigravityReasoningReplayEntries) > AntigravityReasoningReplayCacheMaxEntries {
-		evictOldestAntigravityReasoningReplayEntries(AntigravityReasoningReplayCacheEvictBatchSize)
-	}
+	storeAntigravityReasoningReplayEntryLocked(key, antigravityReasoningReplayEntry{Items: normalized, Timestamp: now, Revision: antigravityReasoningReplayNextRevision, Branch: branch})
+	enforceAntigravityReasoningReplayLimitsLocked()
 	return true, nil
 }
 
@@ -377,10 +416,8 @@ func DeleteAntigravityReasoningReplayItemsIfUnchanged(ctx context.Context, model
 		return false, nil
 	}
 	antigravityReasoningReplayNextRevision++
-	antigravityReasoningReplayEntries[key] = antigravityReasoningReplayEntry{Timestamp: time.Now(), Revision: antigravityReasoningReplayNextRevision, Branch: newAntigravityReasoningReplayGeneration(), Deleted: true}
-	if len(antigravityReasoningReplayEntries) > AntigravityReasoningReplayCacheMaxEntries {
-		evictOldestAntigravityReasoningReplayEntries(AntigravityReasoningReplayCacheEvictBatchSize)
-	}
+	storeAntigravityReasoningReplayEntryLocked(key, antigravityReasoningReplayEntry{Timestamp: time.Now(), Revision: antigravityReasoningReplayNextRevision, Branch: newAntigravityReasoningReplayGeneration(), Deleted: true})
+	enforceAntigravityReasoningReplayLimitsLocked()
 	return true, nil
 }
 
@@ -409,10 +446,8 @@ func DeleteAntigravityReasoningReplayItemRequired(ctx context.Context, modelName
 	cacheCleanupOnce.Do(startCacheCleanup)
 	antigravityReasoningReplayMu.Lock()
 	antigravityReasoningReplayNextRevision++
-	antigravityReasoningReplayEntries[key] = antigravityReasoningReplayEntry{Timestamp: time.Now(), Revision: antigravityReasoningReplayNextRevision, Branch: newAntigravityReasoningReplayGeneration(), Deleted: true}
-	if len(antigravityReasoningReplayEntries) > AntigravityReasoningReplayCacheMaxEntries {
-		evictOldestAntigravityReasoningReplayEntries(AntigravityReasoningReplayCacheEvictBatchSize)
-	}
+	storeAntigravityReasoningReplayEntryLocked(key, antigravityReasoningReplayEntry{Timestamp: time.Now(), Revision: antigravityReasoningReplayNextRevision, Branch: newAntigravityReasoningReplayGeneration(), Deleted: true})
+	enforceAntigravityReasoningReplayLimitsLocked()
 	antigravityReasoningReplayMu.Unlock()
 	return nil
 }
@@ -478,6 +513,7 @@ func newAntigravityReasoningReplayTombstone() []byte {
 func ClearAntigravityReasoningReplayCache() {
 	antigravityReasoningReplayMu.Lock()
 	antigravityReasoningReplayEntries = make(map[string]antigravityReasoningReplayEntry)
+	antigravityReasoningReplayTotalBytes = 0
 	antigravityReasoningReplayEvictionEpoch++
 	antigravityReasoningReplayMu.Unlock()
 }
@@ -638,8 +674,9 @@ func evictOldestAntigravityReasoningReplayEntries(count int) {
 	if count > len(candidates) {
 		count = len(candidates)
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		antigravityReasoningReplayEvictionEpoch++
+		antigravityReasoningReplayTotalBytes -= antigravityReasoningReplayEntryBytes(antigravityReasoningReplayEntries[candidates[i].key].Items)
 		delete(antigravityReasoningReplayEntries, candidates[i].key)
 	}
 }
@@ -649,6 +686,7 @@ func purgeExpiredAntigravityReasoningReplayCache(now time.Time) {
 	for key, entry := range antigravityReasoningReplayEntries {
 		if now.Sub(entry.Timestamp) > AntigravityReasoningReplayCacheTTL {
 			antigravityReasoningReplayEvictionEpoch++
+			antigravityReasoningReplayTotalBytes -= antigravityReasoningReplayEntryBytes(entry.Items)
 			delete(antigravityReasoningReplayEntries, key)
 		}
 	}
