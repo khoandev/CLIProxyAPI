@@ -568,15 +568,16 @@ func GetMetaModels() []*ModelInfo {
 	return cloneModelInfos(getModels().Meta)
 }
 
-// LookupStaticModelInfo searches all static model definitions for a model by ID.
-// Returns nil if no matching model is found.
-func LookupStaticModelInfo(modelID string) *ModelInfo {
-	if modelID == "" {
+// staticModelCatalogs returns the model lists the static lookup searches, in
+// search order.
+//
+// The Devin and Meta catalogs are built on demand, so they are resolved by
+// the caller rather than here.
+func staticModelCatalogs(data *staticModelsJSON) [][]*ModelInfo {
+	if data == nil {
 		return nil
 	}
-
-	data := getModels()
-	allModels := [][]*ModelInfo{
+	return [][]*ModelInfo{
 		data.Claude,
 		data.Gemini,
 		data.Vertex,
@@ -585,15 +586,41 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		data.Kimi,
 		data.Antigravity,
 		data.XAI,
-		GetDevinModels(),
-		GetMetaModels(),
 	}
-	for _, models := range allModels {
+}
+
+// findModelByID returns the first model with the given ID in the lists.
+func findModelByID(modelID string, catalogs ...[]*ModelInfo) *ModelInfo {
+	for _, models := range catalogs {
 		for _, m := range models {
 			if m != nil && m.ID == modelID {
-				return cloneModelInfo(m)
+				return m
 			}
 		}
+	}
+	return nil
+}
+
+// LookupStaticModelInfo searches all static model definitions for a model by ID.
+// Returns nil if no matching model is found.
+func LookupStaticModelInfo(modelID string) *ModelInfo {
+	if modelID == "" {
+		return nil
+	}
+
+	data := getModels()
+	if found := findModelByID(modelID, staticModelCatalogs(data)...); found != nil {
+		return cloneModelInfo(found)
+	}
+
+	// The Devin and Meta catalogs are assembled on demand, and assembling them
+	// clones every model they hold. Look the ID up in the catalog sources
+	// instead, so a lookup that misses does not clone whole catalogs.
+	if found := findDevinModelByID(modelID, data); found != nil {
+		return cloneModelInfo(found)
+	}
+	if found := findModelByID(modelID, data.Meta); found != nil {
+		return cloneModelInfo(found)
 	}
 
 	// Dated and bracketed Claude variants (claude-sonnet-5-5-20261001,
@@ -606,6 +633,46 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		}
 	}
 
+	return nil
+}
+
+// findDevinModelByID returns the Devin model with the given ID.
+//
+// It resolves the same model the assembled Devin catalog holds: the hard-coded
+// built-in replaces any catalog entry with the same ID, and the catalog entry
+// set it draws from is the embedded catalog, then the models.json section,
+// then the hard-coded defaults. Unlike the assembled catalog, the lookup does
+// not clone every model it walks past.
+func findDevinModelByID(modelID string, data *staticModelsJSON) *ModelInfo {
+	builtin := devinBuiltinSWE16SlowModelInfo()
+	builtinID := ""
+	if builtin != nil {
+		builtinID = strings.ToLower(strings.TrimSpace(builtin.ID))
+	}
+	if builtinID != "" && strings.EqualFold(builtinID, modelID) {
+		return builtin
+	}
+
+	devinCatalogStore.mu.RLock()
+	models := devinCatalogStore.models
+	devinCatalogStore.mu.RUnlock()
+	if len(models) == 0 {
+		if data != nil && len(data.Devin) > 0 {
+			models = data.Devin
+		} else {
+			models = staticDevinModels
+		}
+	}
+	for _, m := range models {
+		if m == nil || m.ID != modelID {
+			continue
+		}
+		// The built-in replaces a catalog entry with the same ID.
+		if builtinID != "" && strings.EqualFold(builtinID, strings.ToLower(strings.TrimSpace(m.ID))) {
+			continue
+		}
+		return m
+	}
 	return nil
 }
 
