@@ -413,19 +413,32 @@ type Manager struct {
 	stopOnce sync.Once
 	cancel   context.CancelFunc
 
-	mu     sync.Mutex
-	cond   *sync.Cond
-	queue  []queueItem
-	closed bool
+	mu       sync.Mutex
+	cond     *sync.Cond
+	queue    []queueItem
+	closed   bool
+	maxQueue int
 
 	pluginsMu sync.RWMutex
 	plugins   []Plugin
 	named     map[string]int
 }
 
-// NewManager constructs a manager with a buffered queue.
+// DefaultQueueCapacity is the number of pending usage records the manager
+// keeps when no capacity is given.
+const DefaultQueueCapacity = 512
+
+// NewManager constructs a manager with a bounded queue.
+//
+// The queue is bounded because a slow plugin must not let usage records pile
+// up without limit: every pending record holds its response headers, so an
+// unbounded queue turns a slow plugin into unbounded memory growth. When the
+// queue is full the oldest record is dropped.
 func NewManager(buffer int) *Manager {
-	m := &Manager{}
+	if buffer <= 0 {
+		buffer = DefaultQueueCapacity
+	}
+	m := &Manager{maxQueue: buffer}
 	m.cond = sync.NewCond(&m.mu)
 	return m
 }
@@ -540,6 +553,15 @@ func (m *Manager) Publish(ctx context.Context, record Record) {
 		return
 	}
 	m.queue = append(m.queue, queueItem{ctx: ctx, record: record})
+	// Drop the oldest record when the queue is full so a slow plugin cannot
+	// grow the queue without limit.
+	if overflow := len(m.queue) - m.maxQueue; overflow > 0 {
+		copy(m.queue, m.queue[overflow:])
+		for i := len(m.queue) - overflow; i < len(m.queue); i++ {
+			m.queue[i] = queueItem{}
+		}
+		m.queue = m.queue[:len(m.queue)-overflow]
+	}
 	m.mu.Unlock()
 	m.cond.Signal()
 }

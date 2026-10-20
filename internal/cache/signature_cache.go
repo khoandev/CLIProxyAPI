@@ -32,6 +32,15 @@ const (
 
 	// CacheCleanupInterval controls how often stale entries are purged
 	CacheCleanupInterval = 10 * time.Minute
+
+	// SignatureCacheMaxEntriesPerGroup bounds how many signatures one model
+	// group keeps. The cache lives for the whole signature TTL, so without a
+	// bound a long running server accumulates every signature it ever saw.
+	SignatureCacheMaxEntriesPerGroup = 4096
+
+	// SignatureCacheMaxBytesPerGroup bounds the signature bytes one model
+	// group keeps, for the same reason.
+	SignatureCacheMaxBytesPerGroup = 32 << 20
 )
 
 // signatureCache stores signatures by model group -> textHash -> SignatureEntry
@@ -55,6 +64,9 @@ var currentSignatureKVClient = func() (signatureKVClient, bool, error) {
 type groupCache struct {
 	mu      sync.RWMutex
 	entries map[string]SignatureEntry
+	// bytes tracks the total size of the cached signatures, so the group can
+	// be bounded by size as well as by entry count.
+	bytes int
 }
 
 // hashText creates a stable, Unicode-safe key from text content
@@ -97,6 +109,7 @@ func purgeExpiredCaches() {
 		// Remove expired entries
 		for k, entry := range sc.entries {
 			if now.Sub(entry.Timestamp) > SignatureCacheTTL {
+				sc.bytes -= len(entry.Signature)
 				delete(sc.entries, k)
 			}
 		}
@@ -150,11 +163,47 @@ func CacheSignatureBestEffort(ctx context.Context, modelName, text, signature st
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
+	sc.bytes -= len(sc.entries[textHash].Signature)
 	sc.entries[textHash] = SignatureEntry{
 		Signature: signature,
 		Timestamp: time.Now(),
 	}
+	sc.bytes += len(signature)
+	enforceSignatureCacheLimitsLocked(sc)
 	return true
+}
+
+// enforceSignatureCacheLimitsLocked drops the oldest entries until the group
+// fits its entry count and byte budget.
+//
+// The cache keeps every signature for the whole signature TTL, so without a
+// bound a long running server accumulates every signature it ever saw. The
+// oldest entries are dropped first, because a stale signature is the least
+// useful one to keep.
+func enforceSignatureCacheLimitsLocked(sc *groupCache) {
+	if sc == nil {
+		return
+	}
+	for len(sc.entries) > SignatureCacheMaxEntriesPerGroup || sc.bytes > SignatureCacheMaxBytesPerGroup {
+		if len(sc.entries) == 0 {
+			sc.bytes = 0
+			return
+		}
+		oldestKey := ""
+		var oldest time.Time
+		for key, entry := range sc.entries {
+			if oldestKey == "" || entry.Timestamp.Before(oldest) {
+				oldestKey = key
+				oldest = entry.Timestamp
+			}
+		}
+		if oldestKey == "" {
+			sc.bytes = 0
+			return
+		}
+		sc.bytes -= len(sc.entries[oldestKey].Signature)
+		delete(sc.entries, oldestKey)
+	}
 }
 
 // GetCachedSignature retrieves a cached signature for a given model group and text.
@@ -222,6 +271,7 @@ func GetCachedSignatureRequired(ctx context.Context, modelName, text string) (st
 		return "", nil
 	}
 	if now.Sub(entry.Timestamp) > SignatureCacheTTL {
+		sc.bytes -= len(entry.Signature)
 		delete(sc.entries, textHash)
 		sc.mu.Unlock()
 		if groupKey == "gemini" {
@@ -271,6 +321,7 @@ func DeleteCachedSignatureRequired(ctx context.Context, modelName, text string) 
 	}
 	sc := val.(*groupCache)
 	sc.mu.Lock()
+	sc.bytes -= len(sc.entries[textHash].Signature)
 	delete(sc.entries, textHash)
 	isEmpty := len(sc.entries) == 0
 	sc.mu.Unlock()
