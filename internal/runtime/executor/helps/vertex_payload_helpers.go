@@ -15,6 +15,18 @@ func StripVertexOpenAIResponsesToolCallIDs(payload []byte, sourceFormat string) 
 		return payload
 	}
 
+	// The payload carries the whole conversation, often several megabytes, and
+	// the walk below reads every part of it. A request without a function call
+	// or response cannot hold a call ID, so the cheap byte scan answers that
+	// without walking the document.
+	//
+	// One short needle covers both keys: "functionCall" and "functionResponse"
+	// share the "functio" prefix. A needle of at most eight bytes is markedly
+	// faster to search for than a long one.
+	if !jsonMayContainASCII(payload, `"functio`) {
+		return payload
+	}
+
 	contents := util.GetGJSONBytesNoCopy(payload, "contents")
 	if !contents.IsArray() || !vertexContentsHaveToolCallIDs(contents) {
 		return payload
