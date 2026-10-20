@@ -27,6 +27,16 @@ func ParseGJSONBytesNoCopy(data []byte) gjson.Result {
 	return gjson.Parse(unsafe.String(unsafe.SliceData(data), len(data)))
 }
 
+// GJSONRawBytesNoCopy returns the raw bytes of a GJSON result without copying
+// them. The result must come from a no-copy lookup, and the caller must not
+// mutate the source buffer while using the returned bytes.
+func GJSONRawBytesNoCopy(result gjson.Result) []byte {
+	if result.Raw == "" {
+		return nil
+	}
+	return unsafe.Slice(unsafe.StringData(result.Raw), len(result.Raw))
+}
+
 // JSONIndex holds the top-level members of a JSON object so that many path
 // lookups do not rescan the whole document.
 //

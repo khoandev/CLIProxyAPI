@@ -214,7 +214,9 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 				// Handle content based on its type
 				if contentResult.Exists() && contentResult.Type == gjson.String && contentResult.String() != "" {
 					part := []byte(`{"type":"text","text":""}`)
-					part, _ = sjson.SetBytes(part, "text", contentResult.String())
+					// The raw value is already an escaped JSON string, so it is
+					// written as is instead of being unescaped and escaped again.
+					part, _ = sjson.SetRawBytes(part, "text", util.GJSONRawBytesNoCopy(contentResult))
 					contentBlocks = append(contentBlocks, part)
 				} else if contentResult.Exists() && contentResult.IsArray() {
 					contentResult.ForEach(func(_, part gjson.Result) bool {
