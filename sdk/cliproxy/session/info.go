@@ -166,7 +166,8 @@ func ExtractSessionInfo(headers http.Header, payload []byte, metadata map[string
 			}
 		}
 		if parentCandidate == "" {
-			parentCandidate = ClaudeMetadataParentSessionID(payload)
+			_, parentSessionID, _ := claudeMetadataIdentities(root)
+			parentCandidate = parentSessionID
 		}
 	}
 
@@ -187,7 +188,7 @@ func ExtractSessionInfo(headers http.Header, payload []byte, metadata map[string
 			}
 		}
 		if agentID == "" {
-			_, _, agentID = ClaudeMetadataIdentities(payload)
+			_, _, agentID = claudeMetadataIdentities(root)
 		}
 		parentAgentID := sessionHeaderValue(headers, "X-Claude-Code-Parent-Agent-Id")
 		if parentAgentID == "" && root.Exists() {
@@ -224,7 +225,7 @@ func ExtractSessionInfo(headers http.Header, payload []byte, metadata map[string
 
 	// 2. Claude Code metadata.user_id in payload (outranks generic headers)
 	if len(payload) > 0 {
-		if sid, parentSID, agentID := ClaudeMetadataIdentities(payload); sid != "" {
+		if sid, parentSID, agentID := claudeMetadataIdentities(root); sid != "" {
 			info.ClientType = "claude"
 			if agentID == "" {
 				agentID = sessionHeaderValue(headers, "X-Claude-Code-Agent-Id")

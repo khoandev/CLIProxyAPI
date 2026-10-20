@@ -147,7 +147,13 @@ func ClaudeMetadataIdentities(payload []byte) (sessionID, parentSessionID, agent
 	if len(payload) == 0 {
 		return "", "", ""
 	}
-	root := util.ParseGJSONBytesNoCopy(payload)
+	return claudeMetadataIdentities(newSessionObject(util.ParseGJSONBytesNoCopy(payload)))
+}
+
+// claudeMetadataIdentities resolves the Claude metadata identities from an
+// already indexed body. Callers that already built the index reuse it instead
+// of rescanning the payload for every candidate path.
+func claudeMetadataIdentities(root sessionObject) (sessionID, parentSessionID, agentID string) {
 	userID := strings.TrimSpace(root.Get("metadata.user_id").String())
 	if userID == "" {
 		req := root.Get("request")
@@ -454,7 +460,7 @@ func hasExplicitSession(headers map[string][]string, payload []byte) bool {
 			return true
 		}
 	}
-	if ClaudeMetadataSessionID(payload) != "" {
+	if sessionID, _, _ := claudeMetadataIdentities(root); sessionID != "" {
 		return true
 	}
 	userID := strings.TrimSpace(root.Get("metadata.user_id").String())
