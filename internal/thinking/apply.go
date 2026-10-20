@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -277,7 +278,7 @@ func applyThinking(body, sourceBody []byte, model string, fromFormat string, toF
 					"budget":   config.Budget,
 					"level":    config.Level,
 				}
-				if baseline := extractCodexConfig(body); baseline.Mode == ModeLevel {
+				if baseline := extractCodexConfig(util.NewJSONIndex(body)); baseline.Mode == ModeLevel {
 					fields["baseline_level"] = baseline.Level
 				}
 				entry := log.WithFields(fields)
@@ -463,7 +464,7 @@ func mapConfiguredHighIntent(level ThinkingLevel, modelInfo *registry.ModelInfo)
 func extractSourceThinkingConfig(body []byte, provider string) ThinkingConfig {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "openai-response" {
-		return extractCodexConfig(body)
+		return extractCodexConfig(util.NewJSONIndex(body))
 	}
 	return extractThinkingConfig(body, provider)
 }
@@ -611,19 +612,22 @@ func extractThinkingConfig(body []byte, provider string) ThinkingConfig {
 		return ThinkingConfig{}
 	}
 
+	// One index replaces a full document scan per candidate path.
+	index := util.NewJSONIndex(body)
+
 	switch provider {
 	case "claude":
-		return extractClaudeConfig(body)
+		return extractClaudeConfig(index)
 	case "gemini", "antigravity":
-		return extractGeminiConfig(body, provider)
+		return extractGeminiConfig(index, provider)
 	case "interactions":
-		return extractInteractionsConfig(body)
+		return extractInteractionsConfig(index)
 	case "openai":
-		return extractOpenAIConfig(body)
+		return extractOpenAIConfig(index)
 	case "codex", "xai":
-		return extractCodexConfig(body)
+		return extractCodexConfig(index)
 	case "kimi", "kimi-ai", "kimi.ai", "kimi.com":
-		return extractKimiConfig(body)
+		return extractKimiConfig(index)
 	default:
 		return ThinkingConfig{}
 	}
@@ -670,7 +674,7 @@ func ExtractTranslatedReasoningEffort(body []byte, provider string) string {
 		case "openai", "openai-response":
 			config = extractCodexUsageConfig(body)
 			if !hasThinkingConfig(config) {
-				config = extractOpenAIConfig(body)
+				config = extractOpenAIConfig(util.NewJSONIndex(body))
 			}
 		}
 	}
@@ -732,8 +736,8 @@ func reasoningEffortFromConfig(config ThinkingConfig) string {
 // When type="enabled", budget_tokens takes precedence over output_config.effort.
 // When type="enabled" without budget_tokens, output_config.effort is preserved if present;
 // otherwise returns ModeAuto to indicate the user wants thinking enabled with default budget.
-func extractClaudeConfig(body []byte) ThinkingConfig {
-	thinkingType := gjson.GetBytes(body, "thinking.type").String()
+func extractClaudeConfig(index util.JSONIndex) ThinkingConfig {
+	thinkingType := index.Get("thinking.type").String()
 	if thinkingType == "disabled" {
 		return ThinkingConfig{Mode: ModeNone, Budget: 0}
 	}
@@ -741,7 +745,7 @@ func extractClaudeConfig(body []byte) ThinkingConfig {
 		// Claude adaptive thinking uses output_config.effort (low/medium/high/max).
 		// We only treat it as a thinking config when effort is explicitly present;
 		// otherwise we passthrough and let upstream defaults apply.
-		if effort := gjson.GetBytes(body, "output_config.effort"); effort.Exists() && effort.Type == gjson.String {
+		if effort := index.Get("output_config.effort"); effort.Exists() && effort.Type == gjson.String {
 			value := strings.ToLower(strings.TrimSpace(effort.String()))
 			if value == "" {
 				return ThinkingConfig{}
@@ -759,7 +763,7 @@ func extractClaudeConfig(body []byte) ThinkingConfig {
 	}
 
 	// Check budget_tokens
-	if budget := gjson.GetBytes(body, "thinking.budget_tokens"); budget.Exists() {
+	if budget := index.Get("thinking.budget_tokens"); budget.Exists() {
 		value := int(budget.Int())
 		switch value {
 		case 0:
@@ -773,7 +777,7 @@ func extractClaudeConfig(body []byte) ThinkingConfig {
 
 	// If type="enabled", check output_config.effort before falling back to auto
 	if thinkingType == "enabled" {
-		if effort := gjson.GetBytes(body, "output_config.effort"); effort.Exists() && effort.Type == gjson.String {
+		if effort := index.Get("output_config.effort"); effort.Exists() && effort.Type == gjson.String {
 			value := strings.ToLower(strings.TrimSpace(effort.String()))
 			if value != "" {
 				switch value {
@@ -802,17 +806,17 @@ func extractClaudeConfig(body []byte) ThinkingConfig {
 //
 // Priority: thinkingLevel is checked first (Gemini 3 format), then thinkingBudget (Gemini 2.5 format).
 // This allows newer Gemini 3 level-based configs to take precedence.
-func extractGeminiConfig(body []byte, provider string) ThinkingConfig {
+func extractGeminiConfig(index util.JSONIndex, provider string) ThinkingConfig {
 	prefix := "generationConfig.thinkingConfig"
 	if provider == "antigravity" {
 		prefix = "request.generationConfig.thinkingConfig"
 	}
 
 	// Check thinkingLevel first (Gemini 3 format takes precedence)
-	level := gjson.GetBytes(body, prefix+".thinkingLevel")
+	level := index.Get(prefix + ".thinkingLevel")
 	if !level.Exists() {
 		// Google official Gemini Python SDK sends snake_case field names
-		level = gjson.GetBytes(body, prefix+".thinking_level")
+		level = index.Get(prefix + ".thinking_level")
 	}
 	if level.Exists() {
 		value := level.String()
@@ -827,10 +831,10 @@ func extractGeminiConfig(body []byte, provider string) ThinkingConfig {
 	}
 
 	// Check thinkingBudget (Gemini 2.5 format)
-	budget := gjson.GetBytes(body, prefix+".thinkingBudget")
+	budget := index.Get(prefix + ".thinkingBudget")
 	if !budget.Exists() {
 		// Google official Gemini Python SDK sends snake_case field names
-		budget = gjson.GetBytes(body, prefix+".thinking_budget")
+		budget = index.Get(prefix + ".thinking_budget")
 	}
 	if budget.Exists() {
 		value := int(budget.Int())
@@ -847,7 +851,7 @@ func extractGeminiConfig(body []byte, provider string) ThinkingConfig {
 	return ThinkingConfig{}
 }
 
-func extractInteractionsConfig(body []byte) ThinkingConfig {
+func extractInteractionsConfig(index util.JSONIndex) ThinkingConfig {
 	for _, path := range []string{
 		"generation_config.thinking_level",
 		"generation_config.thinkingLevel",
@@ -856,7 +860,7 @@ func extractInteractionsConfig(body []byte) ThinkingConfig {
 		"generation_config.thinkingConfig.thinking_level",
 		"generation_config.thinkingConfig.thinkingLevel",
 	} {
-		level := gjson.GetBytes(body, path)
+		level := index.Get(path)
 		if !level.Exists() {
 			continue
 		}
@@ -879,7 +883,7 @@ func extractInteractionsConfig(body []byte) ThinkingConfig {
 		"generation_config.thinkingConfig.thinking_budget",
 		"generation_config.thinkingConfig.thinkingBudget",
 	} {
-		budget := gjson.GetBytes(body, path)
+		budget := index.Get(path)
 		if !budget.Exists() {
 			continue
 		}
@@ -904,9 +908,9 @@ func extractInteractionsConfig(body []byte) ThinkingConfig {
 //
 // OpenAI uses level-based thinking configuration only, no numeric budget support.
 // The "none" value is treated specially to return ModeNone.
-func extractOpenAIConfig(body []byte) ThinkingConfig {
+func extractOpenAIConfig(index util.JSONIndex) ThinkingConfig {
 	// Check reasoning_effort (OpenAI Chat Completions format)
-	if effort := gjson.GetBytes(body, "reasoning_effort"); effort.Exists() {
+	if effort := index.Get("reasoning_effort"); effort.Exists() {
 		value := effort.String()
 		if value == "none" {
 			return ThinkingConfig{Mode: ModeNone, Budget: 0}
@@ -924,20 +928,20 @@ func extractOpenAIConfig(body []byte) ThinkingConfig {
 // thinking.type="enabled" without an explicit effort means "use the upstream
 // default" and therefore returns an empty config so ApplyThinking preserves the
 // request unchanged instead of interpreting it as CPA's ModeAuto.
-func extractKimiConfig(body []byte) ThinkingConfig {
-	thinkingType := gjson.GetBytes(body, "thinking.type")
+func extractKimiConfig(index util.JSONIndex) ThinkingConfig {
+	thinkingType := index.Get("thinking.type")
 	if thinkingType.Exists() {
 		switch strings.ToLower(strings.TrimSpace(thinkingType.String())) {
 		case "disabled":
 			return ThinkingConfig{Mode: ModeNone, Budget: 0}
 		case "enabled":
-			if !gjson.GetBytes(body, "thinking.effort").Exists() {
+			if !index.Get("thinking.effort").Exists() {
 				return ThinkingConfig{}
 			}
 		}
 	}
 
-	if effort := gjson.GetBytes(body, "thinking.effort"); effort.Exists() {
+	if effort := index.Get("thinking.effort"); effort.Exists() {
 		value := strings.ToLower(strings.TrimSpace(effort.String()))
 		switch value {
 		case "":
@@ -958,7 +962,7 @@ func extractKimiConfig(body []byte) ThinkingConfig {
 		return ThinkingConfig{}
 	}
 
-	return extractOpenAIConfig(body)
+	return extractOpenAIConfig(index)
 }
 
 // extractCodexConfig extracts thinking configuration from Codex format request body.
@@ -967,9 +971,9 @@ func extractKimiConfig(body []byte) ThinkingConfig {
 //   - reasoning.effort: "none", "low", "medium", "high"
 //
 // This is similar to OpenAI but uses nested field "reasoning.effort" instead of "reasoning_effort".
-func extractCodexConfig(body []byte) ThinkingConfig {
+func extractCodexConfig(index util.JSONIndex) ThinkingConfig {
 	// Check reasoning.effort (Codex / OpenAI Responses API format)
-	if effort := gjson.GetBytes(body, "reasoning.effort"); effort.Exists() {
+	if effort := index.Get("reasoning.effort"); effort.Exists() {
 		value := effort.String()
 		if value == "none" {
 			return ThinkingConfig{Mode: ModeNone, Budget: 0}
@@ -989,5 +993,5 @@ func extractCodexUsageConfig(body []byte) ThinkingConfig {
 	if config := extractConfigurationUpdateConfig(body); hasThinkingConfig(config) {
 		return config
 	}
-	return extractCodexConfig(body)
+	return extractCodexConfig(util.NewJSONIndex(body))
 }

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -38,12 +39,15 @@ func ExtractSummaryConfig(body []byte, format string) SummaryConfig {
 		return SummaryConfig{}
 	}
 
+	// One index replaces a full document scan per candidate path.
+	index := util.NewJSONIndex(body)
+
 	switch normalized {
 	case "openai":
-		if config, ok := extractOpenAIExplicitSummaryConfig(body); ok {
+		if config, ok := extractOpenAIExplicitSummaryConfig(index); ok {
 			return config
 		}
-		if effort := gjson.GetBytes(body, "reasoning_effort"); effort.Type == gjson.String {
+		if effort := index.Get("reasoning_effort"); effort.Type == gjson.String {
 			value := strings.ToLower(strings.TrimSpace(effort.String()))
 			if value == "" {
 				return SummaryConfig{}
@@ -54,22 +58,22 @@ func ExtractSummaryConfig(body []byte, format string) SummaryConfig {
 			return SummaryConfig{Mode: SummaryEnabled, Detail: "auto"}
 		}
 	case "openai-response", "codex":
-		if config, ok := responsesSummaryConfig(body, "reasoning.summary"); ok {
+		if config, ok := responsesSummaryConfig(index, "reasoning.summary"); ok {
 			return config
 		}
-		if config, ok := responsesSummaryConfig(body, "reasoning.generate_summary"); ok {
+		if config, ok := responsesSummaryConfig(index, "reasoning.generate_summary"); ok {
 			return config
 		}
 	case "claude":
 		// Anthropic only accepts display alongside active adaptive/manual thinking.
-		if !claudeThinkingAcceptsDisplay(body) {
+		if !claudeThinkingAcceptsDisplay(index) {
 			return SummaryConfig{}
 		}
-		if config, ok := claudeSummaryConfig(body, "thinking.display"); ok {
+		if config, ok := claudeSummaryConfig(index, "thinking.display"); ok {
 			return config
 		}
 	case "gemini":
-		if config, ok := firstSummaryBoolConfig(body, []string{
+		if config, ok := firstSummaryBoolConfig(index, []string{
 			"generationConfig.thinkingConfig.includeThoughts",
 			"generationConfig.thinkingConfig.include_thoughts",
 			"generation_config.thinking_config.include_thoughts",
@@ -78,7 +82,7 @@ func ExtractSummaryConfig(body []byte, format string) SummaryConfig {
 			return config
 		}
 	case "antigravity":
-		if config, ok := firstSummaryBoolConfig(body, []string{
+		if config, ok := firstSummaryBoolConfig(index, []string{
 			"request.generationConfig.thinkingConfig.includeThoughts",
 			"request.generationConfig.thinkingConfig.include_thoughts",
 			"request.generationConfig.thinking_config.includeThoughts",
@@ -91,17 +95,17 @@ func ExtractSummaryConfig(body []byte, format string) SummaryConfig {
 			"generation_config.thinking_summaries",
 			"generation_config.thinkingSummaries",
 		} {
-			if config, ok := interactionsSummaryConfig(body, path); ok {
+			if config, ok := interactionsSummaryConfig(index, path); ok {
 				return config
 			}
 		}
 		// Existing Interactions translators accept the OpenAI-style top-level
 		// compatibility object. Keep the official generation_config selector
 		// authoritative when both are present.
-		if config, ok := interactionsSummaryConfig(body, "reasoning.summary"); ok {
+		if config, ok := interactionsSummaryConfig(index, "reasoning.summary"); ok {
 			return config
 		}
-		if config, ok := firstSummaryBoolConfig(body, []string{
+		if config, ok := firstSummaryBoolConfig(index, []string{
 			"generation_config.thinking_config.include_thoughts",
 			"generation_config.thinking_config.includeThoughts",
 			"generation_config.thinkingConfig.include_thoughts",
@@ -126,7 +130,7 @@ func ExtractExplicitSummaryConfig(body []byte, format string) SummaryConfig {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return SummaryConfig{}
 	}
-	config, _ := extractOpenAIExplicitSummaryConfig(body)
+	config, _ := extractOpenAIExplicitSummaryConfig(util.NewJSONIndex(body))
 	return config
 }
 
@@ -198,10 +202,12 @@ func applySummaryConfigForProvider(body []byte, format, model, provider string, 
 		// Anthropic docs:
 		// https://platform.claude.com/docs/en/build-with-claude/thinking
 		// https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#supported-models
-		if enabled && !gjson.GetBytes(body, "thinking.type").Exists() {
+		index := util.NewJSONIndex(body)
+		if enabled && !index.Get("thinking.type").Exists() {
 			body = enableClaudeThinkingForSummary(body, model, modelInfo)
+			index = util.NewJSONIndex(body)
 		}
-		if !claudeThinkingAcceptsDisplay(body) {
+		if !claudeThinkingAcceptsDisplay(index) {
 			return body
 		}
 		value := "omitted"
@@ -266,15 +272,15 @@ func summaryFormatSupported(format string) bool {
 
 // claudeThinkingAcceptsDisplay reports whether the body carries an active
 // thinking block that can hold a display field.
-func claudeThinkingAcceptsDisplay(body []byte) bool {
-	switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String())) {
+func claudeThinkingAcceptsDisplay(index util.JSONIndex) bool {
+	switch strings.ToLower(strings.TrimSpace(index.Get("thinking.type").String())) {
 	case "adaptive":
 		return true
 	case "enabled":
 		// This runs before ApplyThinking normalizes the request, so a missing
 		// budget_tokens is an unfinished body rather than inactive thinking. CPA
 		// also accepts -1 as its compatibility representation for auto thinking.
-		budget := gjson.GetBytes(body, "thinking.budget_tokens")
+		budget := index.Get("thinking.budget_tokens")
 		if budget.Type != gjson.Number {
 			return true
 		}
@@ -326,7 +332,7 @@ func isOpenRouterProvider(provider string) bool {
 	return false
 }
 
-func extractOpenAIExplicitSummaryConfig(body []byte) (SummaryConfig, bool) {
+func extractOpenAIExplicitSummaryConfig(index util.JSONIndex) (SummaryConfig, bool) {
 	// Google's documented Chat Completions extension is the authoritative
 	// explicit visibility control when present, ahead of CPA compatibility
 	// aliases and Chat's reasoning_effort fallback.
@@ -348,7 +354,7 @@ func extractOpenAIExplicitSummaryConfig(body []byte) (SummaryConfig, bool) {
 		"generation_config.thinking_config.include_thoughts",
 		"generation_config.thinking_config.includeThoughts",
 	} {
-		if config, ok := summaryBoolConfig(body, path); ok {
+		if config, ok := summaryBoolConfig(index, path); ok {
 			return config, true
 		}
 	}
@@ -357,7 +363,7 @@ func extractOpenAIExplicitSummaryConfig(body []byte) (SummaryConfig, bool) {
 		"reasoning.summary",
 		"reasoning.generate_summary",
 	} {
-		if config, ok := responsesSummaryConfig(body, path); ok {
+		if config, ok := responsesSummaryConfig(index, path); ok {
 			return config, true
 		}
 	}
@@ -366,13 +372,13 @@ func extractOpenAIExplicitSummaryConfig(body []byte) (SummaryConfig, bool) {
 	// OpenAI wire field; include_reasoning is its documented legacy alias
 	// (include_reasoning: false is equivalent to reasoning: {exclude: true}).
 	// Only accept actual JSON booleans.
-	if exclude := gjson.GetBytes(body, "reasoning.exclude"); exclude.IsBool() {
+	if exclude := index.Get("reasoning.exclude"); exclude.IsBool() {
 		if exclude.Bool() {
 			return SummaryConfig{Mode: SummaryDisabled}, true
 		}
 		return SummaryConfig{Mode: SummaryEnabled, Detail: "auto"}, true
 	}
-	if include := gjson.GetBytes(body, "include_reasoning"); include.IsBool() {
+	if include := index.Get("include_reasoning"); include.IsBool() {
 		if include.Bool() {
 			return SummaryConfig{Mode: SummaryEnabled, Detail: "auto"}, true
 		}
@@ -380,7 +386,7 @@ func extractOpenAIExplicitSummaryConfig(body []byte) (SummaryConfig, bool) {
 	}
 	// OpenRouter's reasoning.enabled turns reasoning on "with no exclusions", so
 	// it also decides visibility when no dedicated bit was sent.
-	if enabled := gjson.GetBytes(body, "reasoning.enabled"); enabled.IsBool() {
+	if enabled := index.Get("reasoning.enabled"); enabled.IsBool() {
 		if enabled.Bool() {
 			return SummaryConfig{Mode: SummaryEnabled, Detail: "auto"}, true
 		}
@@ -389,17 +395,17 @@ func extractOpenAIExplicitSummaryConfig(body []byte) (SummaryConfig, bool) {
 	return SummaryConfig{}, false
 }
 
-func firstSummaryBoolConfig(body []byte, paths []string) (SummaryConfig, bool) {
+func firstSummaryBoolConfig(index util.JSONIndex, paths []string) (SummaryConfig, bool) {
 	for _, path := range paths {
-		if config, ok := summaryBoolConfig(body, path); ok {
+		if config, ok := summaryBoolConfig(index, path); ok {
 			return config, true
 		}
 	}
 	return SummaryConfig{}, false
 }
 
-func summaryBoolConfig(body []byte, path string) (SummaryConfig, bool) {
-	switch value := gjson.GetBytes(body, path); value.Type {
+func summaryBoolConfig(index util.JSONIndex, path string) (SummaryConfig, bool) {
+	switch value := index.Get(path); value.Type {
 	case gjson.True:
 		return SummaryConfig{Mode: SummaryEnabled, Detail: "auto"}, true
 	case gjson.False:
@@ -409,8 +415,8 @@ func summaryBoolConfig(body []byte, path string) (SummaryConfig, bool) {
 	}
 }
 
-func responsesSummaryConfig(body []byte, path string) (SummaryConfig, bool) {
-	value := gjson.GetBytes(body, path)
+func responsesSummaryConfig(index util.JSONIndex, path string) (SummaryConfig, bool) {
+	value := index.Get(path)
 	if value.Raw == "" {
 		return SummaryConfig{}, false
 	}
@@ -434,8 +440,8 @@ func responsesSummaryConfig(body []byte, path string) (SummaryConfig, bool) {
 	}
 }
 
-func claudeSummaryConfig(body []byte, path string) (SummaryConfig, bool) {
-	value := gjson.GetBytes(body, path)
+func claudeSummaryConfig(index util.JSONIndex, path string) (SummaryConfig, bool) {
+	value := index.Get(path)
 	if value.Type != gjson.String {
 		return SummaryConfig{}, false
 	}
@@ -449,8 +455,8 @@ func claudeSummaryConfig(body []byte, path string) (SummaryConfig, bool) {
 	}
 }
 
-func interactionsSummaryConfig(body []byte, path string) (SummaryConfig, bool) {
-	value := gjson.GetBytes(body, path)
+func interactionsSummaryConfig(index util.JSONIndex, path string) (SummaryConfig, bool) {
+	value := index.Get(path)
 	if value.Type != gjson.String {
 		return SummaryConfig{}, false
 	}
