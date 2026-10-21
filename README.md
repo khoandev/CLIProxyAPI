@@ -144,6 +144,25 @@ PackyCode provides special discounts for our software users: register using <a h
 - OpenAI-compatible upstream providers via config (e.g., OpenRouter)
 - Reusable Go SDK for embedding the proxy (see `docs/sdk-usage.md`)
 
+## Memory & OOM protection
+
+The server keeps its resident memory below the container memory limit, so a
+long-running proxy on a small host is throttled by the garbage collector
+instead of being killed by the kernel OOM killer.
+
+- On startup the server reads the cgroup memory limit (`memory.max` for cgroup
+  v2, `memory.limit_in_bytes` for cgroup v1) and applies a soft heap limit at
+  90 % of it. `GOMEMLIMIT` always wins: when it is set, the server keeps the
+  operator value untouched.
+- The in-process caches are bounded: reasoning replay caches 64 MiB per
+  family, thinking signature cache 128 MiB in total, web search result cache
+  32 MiB, websocket tool caches 4 MiB per session with at most 32 sessions.
+- The request body is read once per request and shared between the middleware
+  and the handler.
+
+Embedding the Go SDK keeps full control: the soft limit is only applied by the
+server binary.
+
 ## Getting Started
 
 CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)

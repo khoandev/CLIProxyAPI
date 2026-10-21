@@ -37,7 +37,9 @@ const (
 	// replay content. The per-entry bound alone does not bound the cache: with
 	// the entry limit reached, the cache could hold terabytes of reasoning
 	// items and exhaust the host. Low-memory deployments need a hard ceiling.
-	CodexReasoningReplayCacheMaxTotalBytes = 256 << 20
+	// The five replay families share this ceiling, so the worst case stays
+	// around 320 MiB instead of 1.25 GiB.
+	CodexReasoningReplayCacheMaxTotalBytes = 64 << 20
 
 	// CodexReasoningReplayCacheEvictBatchSize leaves headroom after the cache
 	// reaches capacity so high write volume does not rescan the map every turn.

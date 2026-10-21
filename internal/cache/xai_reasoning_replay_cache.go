@@ -27,7 +27,7 @@ const (
 	// XAIReasoningReplayCacheMaxTotalBytes bounds the aggregate in-process
 	// replay content. The entry limit alone does not bound memory on a host
 	// with a small RAM budget, so the cache also has a byte ceiling.
-	XAIReasoningReplayCacheMaxTotalBytes = 256 << 20
+	XAIReasoningReplayCacheMaxTotalBytes = 64 << 20
 
 	// XAIReasoningReplayCacheEvictBatchSize leaves headroom after the cache
 	// reaches capacity so high write volume does not rescan the map every turn.

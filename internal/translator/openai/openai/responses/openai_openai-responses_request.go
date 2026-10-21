@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -41,7 +42,8 @@ func convertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 	// Base OpenAI chat completions template with default values
 	out := []byte(`{"model":"","messages":[],"stream":false}`)
 
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
+	index := util.NewJSONIndex(rawJSON)
 	toolIndex := newResponsesToolIndex(root)
 
 	messages := make([][]byte, 0)
@@ -56,14 +58,14 @@ func convertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 	out, _ = sjson.SetBytes(out, "stream", stream)
 
 	// Map Responses text format to Chat Completions response format.
-	if textFormat := root.Get("text.format"); textFormat.Exists() {
+	if textFormat := index.Get("text.format"); textFormat.Exists() {
 		if responseFormat := convertResponsesTextFormatToChatResponseFormat(textFormat); len(responseFormat) > 0 {
 			out, _ = sjson.SetRawBytes(out, "response_format", responseFormat)
 		}
 	}
 
 	// Map generation parameters from responses format to chat completions format
-	if maxTokens := root.Get("max_output_tokens"); maxTokens.Exists() {
+	if maxTokens := index.Get("max_output_tokens"); maxTokens.Exists() {
 		if maxTokens.Raw != "" {
 			out, _ = sjson.SetRawBytes(out, "max_tokens", []byte(maxTokens.Raw))
 		} else {
@@ -72,7 +74,7 @@ func convertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 	}
 
 	// Convert instructions to system message
-	if instructions := root.Get("instructions"); instructions.Exists() {
+	if instructions := index.Get("instructions"); instructions.Exists() {
 		systemMessage := []byte(`{"role":"system","content":""}`)
 		systemMessage, _ = sjson.SetBytes(systemMessage, "content", instructions.String())
 		appendMessage(systemMessage)
@@ -125,17 +127,17 @@ func convertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 		}
 
 		hasReasoningInSession := false
-		if effortRes := root.Get("reasoning.effort"); effortRes.Exists() {
+		if effortRes := index.Get("reasoning.effort"); effortRes.Exists() {
 			effort := strings.ToLower(strings.TrimSpace(effortRes.String()))
 			if effort != "" && effort != "none" && effort != "0" && effort != "false" {
 				hasReasoningInSession = true
 			}
-		} else if effortRes := root.Get("reasoning_effort"); effortRes.Exists() {
+		} else if effortRes := index.Get("reasoning_effort"); effortRes.Exists() {
 			effort := strings.ToLower(strings.TrimSpace(effortRes.String()))
 			if effort != "" && effort != "none" && effort != "0" && effort != "false" {
 				hasReasoningInSession = true
 			}
-		} else if reasoningObj := root.Get("reasoning"); reasoningObj.Exists() {
+		} else if reasoningObj := index.Get("reasoning"); reasoningObj.Exists() {
 			reasoningRaw := strings.ToLower(strings.TrimSpace(reasoningObj.String()))
 			if reasoningRaw != "" && reasoningRaw != "none" && reasoningRaw != "false" && reasoningRaw != "{}" {
 				hasReasoningInSession = true
@@ -491,15 +493,15 @@ func convertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 	}
 	if len(chatCompletionsTools) > 0 {
 		out, _ = sjson.SetBytes(out, "tools", chatCompletionsTools)
-		if parallelToolCalls := root.Get("parallel_tool_calls"); parallelToolCalls.Exists() {
+		if parallelToolCalls := index.Get("parallel_tool_calls"); parallelToolCalls.Exists() {
 			out, _ = sjson.SetBytes(out, "parallel_tool_calls", parallelToolCalls.Bool())
 		}
-		if toolChoice := root.Get("tool_choice"); toolChoice.Exists() {
+		if toolChoice := index.Get("tool_choice"); toolChoice.Exists() {
 			out, _ = sjson.SetRawBytes(out, "tool_choice", convertResponsesToolChoiceWithIndex(toolChoice, toolIndex))
 		}
 	}
 
-	if reasoningEffort := root.Get("reasoning.effort"); reasoningEffort.Exists() {
+	if reasoningEffort := index.Get("reasoning.effort"); reasoningEffort.Exists() {
 		effort := strings.ToLower(strings.TrimSpace(reasoningEffort.String()))
 		if effort != "" {
 			out, _ = sjson.SetBytes(out, "reasoning_effort", effort)

@@ -41,7 +41,7 @@ const (
 	// AntigravityReasoningReplayCacheMaxTotalBytes bounds the aggregate
 	// in-process replay content. The per-entry bound alone does not bound the
 	// cache, so a host with a small RAM budget needs a hard ceiling.
-	AntigravityReasoningReplayCacheMaxTotalBytes = 256 << 20
+	AntigravityReasoningReplayCacheMaxTotalBytes = 64 << 20
 
 	// JSON encodes each normalized []byte item as base64. Leave enough room for
 	// that expansion while rejecting oversized Home values before unmarshalling.

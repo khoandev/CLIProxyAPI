@@ -2,10 +2,10 @@ package middleware
 
 import (
 	"bytes"
-	"io"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 )
 
@@ -170,10 +170,8 @@ func requestBodyModel(c *gin.Context) string {
 	}
 	model := ""
 	if c.Request != nil && c.Request.Body != nil {
-		bodyBytes, err := io.ReadAll(c.Request.Body)
+		bodyBytes, err := util.SharedRequestBody(c)
 		if err == nil {
-			// Restore the body so downstream handlers and middleware can read it.
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 			model = gjson.GetBytes(bodyBytes, "model").String()
 		}
 	}

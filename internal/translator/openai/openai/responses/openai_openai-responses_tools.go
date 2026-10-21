@@ -6,6 +6,7 @@ import (
 
 	applypatch "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/apply-patch"
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -347,11 +348,11 @@ func responsesToolOutputText(output gjson.Result) string {
 // a discarded custom declaration must not turn a surviving ordinary function
 // into a custom_tool_call.
 func responsesCustomToolNames(requestRawJSON []byte) map[string]struct{} {
-	return newResponsesToolIndex(gjson.ParseBytes(requestRawJSON)).custom
+	return newResponsesToolIndex(util.ParseGJSONBytesNoCopy(requestRawJSON)).custom
 }
 
 func responsesSingleCustomToolName(requestRawJSON []byte) (string, bool) {
-	return newResponsesToolIndex(gjson.ParseBytes(requestRawJSON)).singleCustomName()
+	return newResponsesToolIndex(util.ParseGJSONBytesNoCopy(requestRawJSON)).singleCustomName()
 }
 
 // unwrapCustomToolInput extracts the freeform input from the {"input": "..."}
@@ -434,7 +435,7 @@ func resolveResponsesQualifiedToolIdentity(root gjson.Result, qualifiedName stri
 // calls stay consistent with their declarations even when a collision renamed
 // the tool. Unknown identities fall back to plain namespace qualification.
 func chatNameForResponsesNamespaceToolCall(requestRawJSON []byte, namespace, localName string) string {
-	return newResponsesToolIndex(gjson.ParseBytes(requestRawJSON)).namespaceName(namespace, localName)
+	return newResponsesToolIndex(util.ParseGJSONBytesNoCopy(requestRawJSON)).namespaceName(namespace, localName)
 }
 
 // canonicalResponsesToolName resolves a name carried by a replayed call or
@@ -447,7 +448,7 @@ func chatNameForResponsesNamespaceToolCall(requestRawJSON []byte, namespace, loc
 // also another namespace's declared child. Ambiguous names remain unresolved
 // rather than being dispatched to another tool.
 func canonicalResponsesToolName(requestRawJSON []byte, name string) string {
-	return newResponsesToolIndex(gjson.ParseBytes(requestRawJSON)).canonicalName(name)
+	return newResponsesToolIndex(util.ParseGJSONBytesNoCopy(requestRawJSON)).canonicalName(name)
 }
 
 // avoidResponsesDeclaredChatAliases keeps a fallback name (the blind cap of an
@@ -465,7 +466,7 @@ func splitResponsesQualifiedFunctionCallFromRequest(requestRawJSON []byte, quali
 		return "", ""
 	}
 
-	if resolvedName, resolvedNamespace, ok := resolveResponsesQualifiedToolIdentity(gjson.ParseBytes(requestRawJSON), qualifiedName); ok {
+	if resolvedName, resolvedNamespace, ok := resolveResponsesQualifiedToolIdentity(util.ParseGJSONBytesNoCopy(requestRawJSON), qualifiedName); ok {
 		return resolvedName, resolvedNamespace
 	}
 	return qualifiedName, ""

@@ -17,6 +17,7 @@ import (
 	. "github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 )
 
@@ -152,7 +153,7 @@ func (h *GeminiAPIHandler) GeminiHandler(c *gin.Context) {
 	}
 
 	method := action[1]
-	rawJSON, errRead := c.GetRawData()
+	rawJSON, errRead := util.SharedRequestBody(c)
 	if errRead != nil && c.Request != nil && c.Request.Body != nil {
 		c.JSON(clienterror.HTTPStatusFromErrorOr(errRead, http.StatusBadRequest), handlers.ErrorResponse{
 			Error: handlers.ErrorDetail{

@@ -336,14 +336,12 @@ func captureRequestInfo(c *gin.Context, captureBody bool) (*RequestInfo, error) 
 	// Capture request body
 	var body []byte
 	if captureBody && c.Request.Body != nil {
-		// Read the body
-		bodyBytes, err := io.ReadAll(c.Request.Body)
+		// Read the body once and share it with the later readers.
+		bodyBytes, err := util.SharedRequestBody(c)
 		if err != nil {
 			return nil, err
 		}
 
-		// Restore the body for the actual request processing
-		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		maxBytes := c.GetInt64("maxRequestBodyBytes")
 		if maxBytes > 0 {
 			body = decodeCapturedRequestBodyForLogWithLimit(bodyBytes, c.Request.Header.Get("Content-Encoding"), maxBytes)

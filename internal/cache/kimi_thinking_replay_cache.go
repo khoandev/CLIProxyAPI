@@ -32,7 +32,7 @@ const (
 	KimiThinkingReplayCacheMaxBlocksPerEntry = 512
 
 	// KimiThinkingReplayCacheMaxTotalBytes bounds aggregate in-process replay content.
-	KimiThinkingReplayCacheMaxTotalBytes = 256 << 20
+	KimiThinkingReplayCacheMaxTotalBytes = 64 << 20
 
 	kimiThinkingReplayCacheMaxSerializedBytes = KimiThinkingReplayCacheMaxBytesPerEntry + 1024
 )

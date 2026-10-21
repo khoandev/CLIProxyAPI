@@ -13,6 +13,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/memlimit"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	log "github.com/sirupsen/logrus"
 )
@@ -31,6 +32,10 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 
 // StartServiceWithPluginHost builds and runs the proxy service with a shared plugin host.
 func StartServiceWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host, serverOptions ...api.ServerOption) {
+	// Keep the resident set below the container memory ceiling so the kernel
+	// OOM killer does not terminate the proxy. GOMEMLIMIT takes precedence.
+	memlimit.Apply()
+
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
@@ -75,6 +80,10 @@ func StartServiceBackground(cfg *config.Config, configPath string, localPassword
 
 // StartServiceBackgroundWithPluginHost starts the proxy service with a shared plugin host.
 func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host, serverOptions ...api.ServerOption) (cancel func(), done <-chan struct{}) {
+	// Keep the resident set below the container memory ceiling so the kernel
+	// OOM killer does not terminate the proxy. GOMEMLIMIT takes precedence.
+	memlimit.Apply()
+
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).

@@ -1450,11 +1450,112 @@ func ParseAntigravityStreamUsage(line []byte) (usage.Detail, bool) {
 	return parseGeminiFamilyUsageDetail(node), true
 }
 
-var stopChunkWithoutUsage sync.Map
+// stopChunkTTL is how long a stop chunk without usage metadata is remembered.
+const stopChunkTTL = 10 * time.Minute
+
+// stopChunkTrackerMaxEntries bounds how many stop chunks are remembered.
+//
+// The tracker is fed by the client stream, so the number of entries is client
+// controlled.
+const stopChunkTrackerMaxEntries = 4096
+
+// stopChunkTracker remembers the trace IDs of stop chunks that carried no
+// usage metadata, so the matching usage chunk can be suppressed.
+//
+// The entries expire on read instead of using one timer per stop chunk: a
+// timer per chunk is pure overhead at high streaming rates.
+type stopChunkTracker struct {
+	mu      sync.Mutex
+	entries map[string]time.Time
+	max     int
+	nowFunc func() time.Time
+}
+
+func newStopChunkTracker(max int) *stopChunkTracker {
+	if max <= 0 {
+		max = stopChunkTrackerMaxEntries
+	}
+	return &stopChunkTracker{
+		entries: make(map[string]time.Time),
+		max:     max,
+		nowFunc: time.Now,
+	}
+}
+
+// remember records a stop chunk trace ID.
+func (t *stopChunkTracker) remember(traceID string) {
+	if t == nil || traceID == "" {
+		return
+	}
+	now := t.nowFunc()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.entries == nil {
+		t.entries = make(map[string]time.Time)
+	}
+	t.entries[traceID] = now.Add(stopChunkTTL)
+	for len(t.entries) > t.max {
+		oldestKey := ""
+		var oldest time.Time
+		for key, expiresAt := range t.entries {
+			if oldestKey == "" || expiresAt.Before(oldest) {
+				oldestKey = key
+				oldest = expiresAt
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(t.entries, oldestKey)
+	}
+}
+
+// has reports whether the trace ID is still remembered. Expired entries are
+// dropped and reported as absent.
+func (t *stopChunkTracker) has(traceID string) bool {
+	if t == nil || traceID == "" {
+		return false
+	}
+	now := t.nowFunc()
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	expiresAt, ok := t.entries[traceID]
+	if !ok {
+		return false
+	}
+	if !now.Before(expiresAt) {
+		delete(t.entries, traceID)
+		return false
+	}
+	return true
+}
+
+// forget drops a remembered trace ID.
+func (t *stopChunkTracker) forget(traceID string) {
+	if t == nil || traceID == "" {
+		return
+	}
+	t.mu.Lock()
+	delete(t.entries, traceID)
+	t.mu.Unlock()
+}
+
+// size reports how many trace IDs are remembered.
+func (t *stopChunkTracker) size() int {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.entries)
+}
+
+var stopChunkWithoutUsage = newStopChunkTracker(stopChunkTrackerMaxEntries)
 
 func rememberStopWithoutUsage(traceID string) {
-	stopChunkWithoutUsage.Store(traceID, struct{}{})
-	time.AfterFunc(10*time.Minute, func() { stopChunkWithoutUsage.Delete(traceID) })
+	stopChunkWithoutUsage.remember(traceID)
 }
 
 // FilterSSEUsageMetadata removes usageMetadata from SSE events that are not
@@ -1485,8 +1586,8 @@ func FilterSSEUsageMetadata(payload []byte) []byte {
 			continue
 		}
 		if traceID != "" {
-			if _, ok := stopChunkWithoutUsage.Load(traceID); ok && hasUsageMetadata(rawJSON) {
-				stopChunkWithoutUsage.Delete(traceID)
+			if stopChunkWithoutUsage.has(traceID) && hasUsageMetadata(rawJSON) {
+				stopChunkWithoutUsage.forget(traceID)
 				continue
 			}
 		}

@@ -11,6 +11,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	. "github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -92,7 +93,7 @@ func buildInteractionsExecutionRequest(target interactionsRequestTarget, modelNa
 
 // Interactions handles POST /v1beta/interactions.
 func (h *GeminiAPIHandler) Interactions(c *gin.Context) {
-	rawJSON, errRead := c.GetRawData()
+	rawJSON, errRead := util.SharedRequestBody(c)
 	if errRead != nil {
 		c.JSON(clienterror.HTTPStatusFromErrorOr(errRead, http.StatusBadRequest), handlers.ErrorResponse{Error: handlers.ErrorDetail{Message: errRead.Error(), Type: "invalid_request_error"}})
 		return

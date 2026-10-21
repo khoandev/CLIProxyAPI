@@ -138,6 +138,16 @@ PackyCode 为本软件用户提供了特别优惠：使用<a href="https://www.p
 - 通过配置接入上游 OpenAI 兼容提供商（例如 OpenRouter）
 - 可复用的 Go SDK（见 `docs/sdk-usage_CN.md`）
 
+## 内存与 OOM 保护
+
+服务器会把常驻内存控制在容器内存上限之下，因此在小型主机上长期运行时，由垃圾回收器降速处理，而不是被内核 OOM killer 终止。
+
+- 启动时读取 cgroup 内存上限（cgroup v2 使用 `memory.max`，cgroup v1 使用 `memory.limit_in_bytes`），并按其 90% 设置软性堆上限。若设置了 `GOMEMLIMIT`，则始终以它为准，服务器不会覆盖。
+- 进程内缓存都有上限：推理回放缓存每个系列 64 MiB，思考签名缓存总计 128 MiB，联网搜索结果缓存 32 MiB，WebSocket 工具缓存每个会话 4 MiB 且最多 32 个会话。
+- 请求体每个请求只读取一次，在中间件与处理器之间共享。
+
+以 Go SDK 方式嵌入时仍可完全控制：软性上限只由服务器二进制设置。
+
 ## 新手入门
 
 CLIProxyAPI 用户手册： [https://help.router-for.me/](https://help.router-for.me/cn/)
