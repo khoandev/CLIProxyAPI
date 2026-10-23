@@ -173,14 +173,13 @@ func (e *OpenAICompatExecutor) executeWithCredentials(ctx context.Context, auth 
 		}
 		translated = sanitizeOpenAIResponsesReasoningEncryptedContentWithCompatModelAndBaseURL(ctx, "openai compat executor", translated, true, resolveResponsesSignatureTargetModel(baseModel, req, opts), baseURL)
 	}
-	reporter.SetTranslatedReasoningEffort(translated, to.String())
-
 	method := openAICompatHTTPMethod(opts)
 	targetURL, err := openAICompatUpstreamURL(baseURL, endpoint, opts.Query)
 	if err != nil {
 		return resp, err
 	}
 	translated = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", translated, originalTranslated, requestedModel, requestPath, opts.Headers)
+	reporter.SetTranslatedReasoningEffort(translated, to.String())
 	var bodyReader io.Reader
 	if len(translated) > 0 {
 		bodyReader = bytes.NewReader(translated)
@@ -490,6 +489,7 @@ func (e *OpenAICompatExecutor) executeStreamWithCredentials(ctx context.Context,
 		return nil, err
 	}
 	translated = helps.ApplyPayloadConfigWithRequest(e.cfg, baseModel, to.String(), from.String(), "", translated, originalTranslated, requestedModel, requestPath, opts.Headers)
+	reporter.SetTranslatedReasoningEffort(translated, to.String())
 	var bodyReader io.Reader
 	if len(translated) > 0 {
 		bodyReader = bytes.NewReader(translated)

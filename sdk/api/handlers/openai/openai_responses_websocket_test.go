@@ -7918,8 +7918,8 @@ func TestResponsesWebsocketReauthorizesEachTurnAndKeepsSocketOpen(t *testing.T) 
 	if got := int(gjson.GetBytes(msg2, "status").Int()); got != http.StatusForbidden {
 		t.Fatalf("turn 2 status = %d, want %d (%s)", got, http.StatusForbidden, msg2)
 	}
-	if got := gjson.GetBytes(msg2, "error.message").String(); got != "key revoked" {
-		t.Fatalf("turn 2 error.message = %q, want %q (%s)", got, "key revoked", msg2)
+	if got := gjson.GetBytes(msg2, "error.message").String(); got != "key revoked (llmgate.app)" {
+		t.Fatalf("turn 2 error.message = %q, want %q (%s)", got, "key revoked (llmgate.app)", msg2)
 	}
 	if got := len(executor.Payloads()); got != 1 {
 		t.Fatalf("executor payloads after revoked turn = %d, want 1", got)
@@ -7934,8 +7934,8 @@ func TestResponsesWebsocketReauthorizesEachTurnAndKeepsSocketOpen(t *testing.T) 
 	if got := int(gjson.GetBytes(msg3, "status").Int()); got != http.StatusTooManyRequests {
 		t.Fatalf("turn 3 status = %d, want %d (%s)", got, http.StatusTooManyRequests, msg3)
 	}
-	if got := gjson.GetBytes(msg3, "error.message").String(); got != "quota exhausted for model" {
-		t.Fatalf("turn 3 error.message = %q, want %q (%s)", got, "quota exhausted for model", msg3)
+	if got := gjson.GetBytes(msg3, "error.message").String(); got != "quota exhausted for model (llmgate.app)" {
+		t.Fatalf("turn 3 error.message = %q, want %q (%s)", got, "quota exhausted for model (llmgate.app)", msg3)
 	}
 	if got := len(executor.Payloads()); got != 1 {
 		t.Fatalf("executor payloads after model-denied turn = %d, want 1", got)
