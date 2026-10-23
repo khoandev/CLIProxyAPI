@@ -746,7 +746,7 @@ func extractClaudeConfig(index util.JSONIndex) ThinkingConfig {
 	if thinkingType == "disabled" {
 		return ThinkingConfig{Mode: ModeNone, Budget: 0}
 	}
-	if !gjson.GetBytes(body, "thinking").Exists() || thinkingType == "adaptive" || thinkingType == "auto" {
+	if !index.Get("thinking").Exists() || thinkingType == "adaptive" || thinkingType == "auto" {
 		// Claude output_config.effort also applies when thinking is omitted.
 		// We only treat it as a thinking config when effort is explicitly present;
 		// otherwise we passthrough and let upstream defaults apply.
