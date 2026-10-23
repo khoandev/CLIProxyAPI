@@ -7974,7 +7974,6 @@ func TestResponsesWebsocketReauthorizesEachTurnAndKeepsSocketOpen(t *testing.T) 
 		if val := turnReq.Header.Get(dropped); val != "" {
 			t.Fatalf("per-turn auth request kept handshake header %s = %q", dropped, val)
 		}
-		}
 	}
 }
 
