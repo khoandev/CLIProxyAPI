@@ -34,6 +34,13 @@ server:
   # Default is 0 (disabled / no limit).
   max-request-body-bytes: 0
 
+  # Cap on concurrent in-flight proxied requests. Requests over the cap are
+  # rejected with HTTP 429 Too Many Requests and a Retry-After header.
+  # 0 (default) derives the cap from the container/GOMEMLIMIT soft memory limit
+  # at 8 MiB per in-flight request (unlimited when no limit is visible);
+  # -1 (or any negative) disables the cap; positive values set the exact cap.
+  max-in-flight-requests: 0
+
   # Global token for GitHub requests (for example, release and asset downloads).
   # A non-empty config token takes precedence over the GITHUB_TOKEN environment variable.
   # Leave empty to use GITHUB_TOKEN, or unauthenticated requests if neither is set.

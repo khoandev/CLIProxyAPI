@@ -33,7 +33,7 @@ func convertOpenAIResponsesRequestToGemini(modelName string, inputRawJSON []byte
 	// Base Gemini API template (do not include thinkingConfig by default)
 	out := []byte(`{"contents":[]}`)
 
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 
 	// Extract tools and forward map early so request contents and toolDeclarations use the exact same forward map
 	functionDeclarations, forwardMap, _ := util.BuildGeminiFunctionDeclarations(root)
@@ -542,13 +542,13 @@ func geminiContent(role string, parts [][]byte) []byte {
 func coalesceAdjacentOpenAIResponsesModelContents(contents [][]byte) [][]byte {
 	coalesced := make([][]byte, 0, len(contents))
 	for _, content := range contents {
-		contentResult := gjson.ParseBytes(content)
+		contentResult := util.ParseGJSONBytesNoCopy(content)
 		if !strings.EqualFold(strings.TrimSpace(contentResult.Get("role").String()), "model") || len(coalesced) == 0 {
 			coalesced = append(coalesced, content)
 			continue
 		}
 		lastIndex := len(coalesced) - 1
-		lastResult := gjson.ParseBytes(coalesced[lastIndex])
+		lastResult := util.ParseGJSONBytesNoCopy(coalesced[lastIndex])
 		if !strings.EqualFold(strings.TrimSpace(lastResult.Get("role").String()), "model") {
 			coalesced = append(coalesced, content)
 			continue
@@ -566,7 +566,7 @@ func coalesceAdjacentOpenAIResponsesModelContents(contents [][]byte) [][]byte {
 		})
 		if len(extraParts) > 0 {
 			var existingParts [][]byte
-			gjson.GetBytes(merged, "parts").ForEach(func(_, p gjson.Result) bool {
+			util.GetGJSONBytesNoCopy(merged, "parts").ForEach(func(_, p gjson.Result) bool {
 				existingParts = append(existingParts, []byte(p.Raw))
 				return true
 			})
@@ -584,7 +584,7 @@ func geminiSystemInstruction(parts [][]byte) []byte {
 }
 
 func stripTrailingOpenAIResponsesModelPrefill(payload []byte) []byte {
-	contents := gjson.GetBytes(payload, "contents")
+	contents := util.GetGJSONBytesNoCopy(payload, "contents")
 	if !contents.IsArray() {
 		return payload
 	}
@@ -828,7 +828,7 @@ func reorderOpenAIResponsesDetachedReasoning(items []gjson.Result) []gjson.Resul
 				bindPreviousFunction := direction == geminiResponsesCarrierPrevious && (targetKind == geminiResponsesCarrierFunction || targetKind == geminiResponsesCarrierAny) && (previousType == "function_call" || previousType == "custom_tool_call") && strings.TrimSpace(previous.Get("_cpa_reasoning_signature").String()) == "" && !alreadyPairedFunction
 				if bindPreviousMessage || bindPreviousFunction {
 					movedItemJSON, _ := sjson.SetBytes([]byte(item.Raw), geminiResponsesCarrierDirectionField, geminiResponsesCarrierNext)
-					reordered[len(reordered)-1] = gjson.ParseBytes(movedItemJSON)
+					reordered[len(reordered)-1] = util.ParseGJSONBytesNoCopy(movedItemJSON)
 					reordered = append(reordered, previous)
 					continue
 				}
@@ -1763,12 +1763,12 @@ func buildOpenAIResponsesFunctionResponseParts(item gjson.Result, functionNamesB
 	}
 
 	for _, part := range imageParts {
-		if inline := gjson.GetBytes(part, "inline_data"); inline.Exists() {
+		if inline := util.GetGJSONBytesNoCopy(part, "inline_data"); inline.Exists() {
 			inlineData := []byte(`{"inlineData":{"mimeType":"","data":""}}`)
 			inlineData, _ = sjson.SetBytes(inlineData, "inlineData.mimeType", inline.Get("mime_type").String())
 			inlineData, _ = sjson.SetBytes(inlineData, "inlineData.data", inline.Get("data").String())
 			functionResponse, _ = sjson.SetRawBytes(functionResponse, "functionResponse.parts.-1", inlineData)
-		} else if fileData := gjson.GetBytes(part, "file_data"); fileData.Exists() {
+		} else if fileData := util.GetGJSONBytesNoCopy(part, "file_data"); fileData.Exists() {
 			fileDataObj := []byte(`{"fileData":{"mimeType":"","fileUri":""}}`)
 			fileDataObj, _ = sjson.SetBytes(fileDataObj, "fileData.mimeType", fileData.Get("mime_type").String())
 			fileDataObj, _ = sjson.SetBytes(fileDataObj, "fileData.fileUri", fileData.Get("file_uri").String())

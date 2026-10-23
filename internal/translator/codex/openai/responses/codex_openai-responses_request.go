@@ -24,13 +24,13 @@ func ConvertOpenAIResponsesRequestToCodex(modelName string, inputRawJSON []byte,
 
 	rawJSON = setCodexRequiredBool(rawJSON, "stream", true)
 	rawJSON = setCodexRequiredBool(rawJSON, "store", false)
-	if gjson.GetBytes(rawJSON, "parallel_tool_calls").Type != gjson.False {
+	if util.GetGJSONBytesNoCopy(rawJSON, "parallel_tool_calls").Type != gjson.False {
 		rawJSON = setCodexRequiredBool(rawJSON, "parallel_tool_calls", true)
 	}
 	rawJSON = setCodexRequiredInclude(rawJSON)
 	// Codex Responses rejects token limit fields, so strip them out before forwarding.
 	rawJSON = deleteCodexRequestFields(rawJSON, "max_output_tokens", "max_completion_tokens", "temperature", "top_p")
-	if serviceTier := gjson.GetBytes(rawJSON, "service_tier"); serviceTier.Exists() {
+	if serviceTier := util.GetGJSONBytesNoCopy(rawJSON, "service_tier"); serviceTier.Exists() {
 		if serviceTier.Type == gjson.String {
 			switch strings.ToLower(strings.TrimSpace(serviceTier.String())) {
 			case "priority", "fast":
@@ -106,7 +106,7 @@ func normalizeEmptyFunctionCallArguments(rawJSON []byte) []byte {
 }
 
 func setCodexRequiredBool(rawJSON []byte, path string, value bool) []byte {
-	current := gjson.GetBytes(rawJSON, path)
+	current := util.GetGJSONBytesNoCopy(rawJSON, path)
 	if value && current.Type == gjson.True || !value && current.Type == gjson.False {
 		return rawJSON
 	}
@@ -119,7 +119,7 @@ func setCodexRequiredBool(rawJSON []byte, path string, value bool) []byte {
 }
 
 func setCodexRequiredInclude(rawJSON []byte) []byte {
-	current := gjson.GetBytes(rawJSON, "include")
+	current := util.GetGJSONBytesNoCopy(rawJSON, "include")
 	includeSources := false
 	if current.IsArray() {
 		values := current.Array()
@@ -152,7 +152,7 @@ func setCodexRequiredInclude(rawJSON []byte) []byte {
 
 func deleteCodexRequestFields(rawJSON []byte, paths ...string) []byte {
 	for _, path := range paths {
-		if !gjson.GetBytes(rawJSON, path).Exists() {
+		if !util.GetGJSONBytesNoCopy(rawJSON, path).Exists() {
 			continue
 		}
 
@@ -265,7 +265,7 @@ func stripPromptCacheBreakpointFromContent(content gjson.Result) ([]byte, bool) 
 // Compatibility strategy:
 // 1) Remove context_management before forwarding to Codex upstream.
 func applyResponsesCompactionCompatibility(rawJSON []byte) []byte {
-	if !gjson.GetBytes(rawJSON, "context_management").Exists() {
+	if !util.GetGJSONBytesNoCopy(rawJSON, "context_management").Exists() {
 		return rawJSON
 	}
 
@@ -339,7 +339,7 @@ func normalizeCodexBuiltinTools(rawJSON []byte) []byte {
 }
 
 func normalizeCodexBuiltinToolArray(rawJSON []byte, path string) []byte {
-	tools := gjson.GetBytes(rawJSON, path)
+	tools := util.GetGJSONBytesNoCopy(rawJSON, path)
 	if !tools.IsArray() {
 		return rawJSON
 	}
@@ -373,7 +373,7 @@ func normalizeCodexBuiltinToolArray(rawJSON []byte, path string) []byte {
 }
 
 func normalizeCodexBuiltinToolAtPath(rawJSON []byte, path string) []byte {
-	currentType := gjson.GetBytes(rawJSON, path).String()
+	currentType := util.GetGJSONBytesNoCopy(rawJSON, path).String()
 	normalizedType := normalizeCodexBuiltinToolType(currentType)
 	if normalizedType == "" {
 		return rawJSON

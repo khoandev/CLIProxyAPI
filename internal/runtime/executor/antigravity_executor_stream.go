@@ -13,6 +13,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -210,7 +211,9 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			}
 		}()
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(nil, streamScannerBuffer)
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, streamScannerBuffer)
+		defer helps.ReleaseScanBuffer(scanBuf)
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var streamUsage helps.StreamUsageBuffer
 		var streamErr error
@@ -296,7 +299,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			if payload == nil {
 				continue
 			}
-			if errorResult := gjson.GetBytes(payload, "error"); errorResult.Exists() {
+			if errorResult := util.GetGJSONBytesNoCopy(payload, "error"); errorResult.Exists() {
 				statusCode := int(errorResult.Get("code").Int())
 				if statusCode < http.StatusBadRequest || statusCode > 599 {
 					statusCode = http.StatusBadGateway
@@ -316,9 +319,9 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			chunks := helps.TranslateStreamWithClaudeInputTokens(ctx, to, responseFormat, req.Model, helps.ApplyPatchOriginalRequest(req, opts), translated, bytes.Clone(payload), &param, claudeInputTokens)
 			helps.RecordApplyPatchStreamFailure(ctx, param, reporter, statusErr{code: http.StatusBadGateway, msg: helps.ApplyPatchUpstreamErrorMessage})
 			var isTerminalChunk bool
-			if finishReason := gjson.GetBytes(payload, "candidates.0.finishReason"); finishReason.Exists() && strings.TrimSpace(finishReason.String()) != "" {
+			if finishReason := util.GetGJSONBytesNoCopy(payload, "candidates.0.finishReason"); finishReason.Exists() && strings.TrimSpace(finishReason.String()) != "" {
 				isTerminalChunk = true
-			} else if finishReason := gjson.GetBytes(payload, "response.candidates.0.finishReason"); finishReason.Exists() && strings.TrimSpace(finishReason.String()) != "" {
+			} else if finishReason := util.GetGJSONBytesNoCopy(payload, "response.candidates.0.finishReason"); finishReason.Exists() && strings.TrimSpace(finishReason.String()) != "" {
 				isTerminalChunk = true
 			} else if replayAccumulator != nil && replayAccumulator.terminal {
 				isTerminalChunk = true
@@ -335,12 +338,12 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 						if len(cPayload) == 0 {
 							continue
 						}
-						cType := gjson.GetBytes(cPayload, "type").String()
+						cType := util.GetGJSONBytesNoCopy(cPayload, "type").String()
 						if cType == "response.completed" || cType == "message_stop" {
 							isTerminalChunk = true
 							break
 						}
-						if finishReason := gjson.GetBytes(cPayload, "choices.0.finish_reason"); finishReason.Exists() && strings.TrimSpace(finishReason.String()) != "" {
+						if finishReason := util.GetGJSONBytesNoCopy(cPayload, "choices.0.finish_reason"); finishReason.Exists() && strings.TrimSpace(finishReason.String()) != "" {
 							isTerminalChunk = true
 							break
 						}
@@ -355,7 +358,7 @@ func (e *AntigravityExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				// split usage/signature frames may still extend the replay ledger.
 				for _, chunk := range chunks {
 					for _, line := range bytes.Split(chunk, []byte("\n")) {
-						if gjson.GetBytes(helps.JSONPayload(line), "type").String() == "response.completed" {
+						if util.GetGJSONBytesNoCopy(helps.JSONPayload(line), "type").String() == "response.completed" {
 							commitReplay()
 						}
 					}
@@ -450,9 +453,9 @@ func (e *AntigravityExecutor) executeCompactionStream(ctx context.Context, auth 
 		return nil, fmt.Errorf("seal compaction capsule: %w", errSeal)
 	}
 
-	inputTokens := int(gjson.GetBytes(summaryResp.Payload, "usage.input_tokens").Int())
-	outputTokens := int(gjson.GetBytes(summaryResp.Payload, "usage.output_tokens").Int())
-	totalTokens := int(gjson.GetBytes(summaryResp.Payload, "usage.total_tokens").Int())
+	inputTokens := int(util.GetGJSONBytesNoCopy(summaryResp.Payload, "usage.input_tokens").Int())
+	outputTokens := int(util.GetGJSONBytesNoCopy(summaryResp.Payload, "usage.output_tokens").Int())
+	totalTokens := int(util.GetGJSONBytesNoCopy(summaryResp.Payload, "usage.total_tokens").Int())
 	if totalTokens == 0 && inputTokens == 0 {
 		usage := helps.ParseOpenAIUsage(summaryResp.Payload)
 		inputTokens = int(usage.InputTokens)

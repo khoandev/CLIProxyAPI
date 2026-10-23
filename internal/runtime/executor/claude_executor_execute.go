@@ -9,11 +9,11 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	log "github.com/sirupsen/logrus"
-	"github.com/tidwall/gjson"
 )
 
 func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
@@ -134,7 +134,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	}
 	contextManagementState := claudeCodeContextManagementState{
 		eligible:    cloaked && isAnthropicUpstreamBase(baseURL),
-		callerOwned: gjson.GetBytes(body, "context_management").Exists(),
+		callerOwned: util.GetGJSONBytesNoCopy(body, "context_management").Exists(),
 	}
 	if contextManagementState.eligible {
 		body, contextManagementState.automaticallyInjected = injectClaudeCodeContextManagement(body)
@@ -200,7 +200,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	// Set the built-in transport default before the explicit payload barrier.
 	// Native non-stream Haiku helper requests omit stream rather than sending
 	// false, so preserve that measured wire shape when the transport agrees.
-	streamField := gjson.GetBytes(body, "stream")
+	streamField := util.GetGJSONBytesNoCopy(body, "stream")
 	if !claudeCodeDetection.HelperProfile || streamField.Exists() || upstreamStream {
 		body = helps.SetBoolIfDifferent(body, "stream", upstreamStream)
 	}

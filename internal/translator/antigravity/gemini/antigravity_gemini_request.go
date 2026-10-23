@@ -698,7 +698,8 @@ func attachInlineDataToFunctionResponse(response gjson.Result, images [][]byte) 
 	for _, img := range images {
 		target, _ = sjson.SetRawBytes(target, "functionResponse.parts.-1", img)
 	}
-	return gjson.ParseBytes(target)
+	// target is not mutated after this point, so the result may alias it.
+	return util.ParseGJSONBytesNoCopy(target)
 }
 
 // collectFunctionResponsesWithSiblingInlineData keeps functionResponse parts and

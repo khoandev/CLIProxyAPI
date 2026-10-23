@@ -58,7 +58,7 @@ func convertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool, 
 
 	template := []byte(`{"model":"","instructions":"","input":[]}`)
 
-	rootResult := gjson.ParseBytes(rawJSON)
+	rootResult := util.ParseGJSONBytesNoCopy(rawJSON)
 	toolNameMap := buildReverseMapFromClaudeOriginalToShort(rawJSON)
 	signatureTargetModel := translatorcommon.ResolveCodexReplayTargetModel(modelName, rawJSON)
 	template, _ = sjson.SetBytes(template, "model", modelName)
@@ -360,11 +360,11 @@ func convertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool, 
 			}
 			tool, _ = sjson.SetRawBytes(tool, "parameters", []byte(normalizeToolParameters(toolResult.Get("input_schema").Raw)))
 			for _, path := range []string{"input_schema", "parameters.$schema", "cache_control", "defer_loading"} {
-				if gjson.GetBytes(tool, path).Exists() {
+				if util.GetGJSONBytesNoCopy(tool, path).Exists() {
 					tool, _ = sjson.DeleteBytes(tool, path)
 				}
 			}
-			if gjson.GetBytes(tool, "strict").Type != gjson.False {
+			if util.GetGJSONBytesNoCopy(tool, "strict").Type != gjson.False {
 				tool, _ = sjson.SetBytes(tool, "strict", false)
 			}
 			toolItems = append(toolItems, tool)
@@ -641,7 +641,7 @@ func buildShortNameMap(names []string) map[string]string {
 
 // buildReverseMapFromClaudeOriginalToShort builds original->short map, used to map tool_use names to short.
 func buildReverseMapFromClaudeOriginalToShort(original []byte) map[string]string {
-	tools := gjson.GetBytes(original, "tools")
+	tools := util.GetGJSONBytesNoCopy(original, "tools")
 	m := map[string]string{}
 	if !tools.IsArray() {
 		return m

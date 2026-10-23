@@ -86,7 +86,9 @@ func (e *MetaExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 			}
 		}()
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, 52_428_800)
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, 52_428_800)
+		defer helps.ReleaseScanBuffer(scanBuf)
 		claudeInputTokens := helps.NewClaudeInputTokenState(prepared.from, prepared.to, prepared.responseFormat, prepared.originalPayload)
 		var streamUsage helps.StreamUsageBuffer
 		defer streamUsage.Publish(ctx, reporter)

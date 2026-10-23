@@ -634,7 +634,9 @@ openaiCompatStreamContinue:
 			}
 		}()
 		scanner := bufio.NewScanner(decodedBody)
-		scanner.Buffer(nil, 52_428_800) // 50MB
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, 52_428_800) // 50MB
+		defer helps.ReleaseScanBuffer(scanBuf)
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var param any
 		helps.InitializeApplyPatchStream(ctx, to, responseFormat, req.Model, helps.ApplyPatchOriginalRequest(req, opts), translated, &param)

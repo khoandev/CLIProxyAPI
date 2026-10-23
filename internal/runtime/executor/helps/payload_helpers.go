@@ -9,6 +9,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -91,6 +92,9 @@ func ApplyPayloadConfigWithTrackedPathsForExecutor(cfg *config.Config, targetExe
 			if len(source) == 0 {
 				source = payload
 			}
+			// Default-rule existence checks scan source per candidate path; index
+			// its top-level members once so absent-path lookups skip a full rescan.
+			sourceIndex := util.NewJSONIndex(source)
 			appliedDefaults := make(map[string]struct{})
 			// Apply default rules: first write wins per field across all matching rules.
 			for i := range rules.Default {
@@ -104,7 +108,7 @@ func ApplyPayloadConfigWithTrackedPathsForExecutor(cfg *config.Config, targetExe
 						continue
 					}
 					for _, resolvedPath := range resolvePayloadRulePaths(out, fullPath) {
-						if gjson.GetBytes(source, resolvedPath).Exists() {
+						if sourceIndex.Get(resolvedPath).Exists() {
 							continue
 						}
 						if _, ok := appliedDefaults[resolvedPath]; ok {
@@ -132,7 +136,7 @@ func ApplyPayloadConfigWithTrackedPathsForExecutor(cfg *config.Config, targetExe
 						continue
 					}
 					for _, resolvedPath := range resolvePayloadRulePaths(out, fullPath) {
-						if gjson.GetBytes(source, resolvedPath).Exists() {
+						if sourceIndex.Get(resolvedPath).Exists() {
 							continue
 						}
 						if _, ok := appliedDefaults[resolvedPath]; ok {

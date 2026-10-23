@@ -52,7 +52,8 @@ func convertGeminiRequestToClaude(modelName string, inputRawJSON []byte, stream 
 	out := []byte(`{"model":"","max_tokens":32000,"messages":[],"metadata":{}}`)
 	out, _ = sjson.SetBytes(out, "metadata.user_id", userID)
 
-	root := gjson.ParseBytes(rawJSON)
+	// rawJSON is the immutable request payload for this call, so root may alias it.
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 	messageAccumulator := translatorcommon.NewClaudeMessageAccumulator(int(root.Get("contents.#").Int()) + 1)
 
 	getGeminiToolID := func(value gjson.Result) string {
@@ -402,7 +403,9 @@ func convertGeminiRequestToClaude(modelName string, inputRawJSON []byte, stream 
 					}
 
 					anthropicTool = lowercaseClaudeToolSchemaTypes(anthropicTool)
-					anthropicTools = append(anthropicTools, gjson.ParseBytes(anthropicTool).Value())
+					// anthropicTool is not mutated after this point, so the
+					// converted value may reference its bytes.
+					anthropicTools = append(anthropicTools, util.ParseGJSONBytesNoCopy(anthropicTool).Value())
 					return true
 				})
 			}
@@ -442,9 +445,9 @@ func normalizeClaudeToolSchema(parameters gjson.Result) []byte {
 
 func lowercaseClaudeToolSchemaTypes(tool []byte) []byte {
 	var pathsToLower []string
-	util.Walk(gjson.ParseBytes(tool), "", "type", &pathsToLower)
+	util.Walk(util.ParseGJSONBytesNoCopy(tool), "", "type", &pathsToLower)
 	for _, path := range pathsToLower {
-		typeValue := gjson.GetBytes(tool, path)
+		typeValue := util.GetGJSONBytesNoCopy(tool, path)
 		normalizedType := strings.ToLower(typeValue.String())
 		if typeValue.Type == gjson.String && normalizedType == typeValue.String() {
 			continue

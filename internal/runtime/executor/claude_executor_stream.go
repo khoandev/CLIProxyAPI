@@ -11,6 +11,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
@@ -137,7 +138,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	}
 	contextManagementState := claudeCodeContextManagementState{
 		eligible:    cloaked && isAnthropicUpstreamBase(baseURL),
-		callerOwned: gjson.GetBytes(body, "context_management").Exists(),
+		callerOwned: util.GetGJSONBytesNoCopy(body, "context_management").Exists(),
 	}
 	if contextManagementState.eligible {
 		body, contextManagementState.automaticallyInjected = injectClaudeCodeContextManagement(body)
@@ -410,8 +411,11 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		// If the response target is Claude, directly forward complete SSE events without translation.
 		if responseFormat == to {
 			scanner := bufio.NewScanner(decodedBody)
-			scanner.Buffer(nil, 52_428_800) // 50MB
-			var event bytes.Buffer
+			scanBuf := helps.AcquireScanBuffer()
+			scanner.Buffer(scanBuf, 52_428_800) // 50MB
+			defer helps.ReleaseScanBuffer(scanBuf)
+			event := helps.AcquireSSEEventBuffer()
+			defer helps.ReleaseSSEEventBuffer(event)
 			var upstreamMessageID string
 			var upstreamStreamErr error
 			upstreamCompleted := false
@@ -487,12 +491,15 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 
 		// For other formats, use translation
 		scanner := bufio.NewScanner(decodedBody)
-		scanner.Buffer(nil, 52_428_800) // 50MB
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, 52_428_800) // 50MB
+		defer helps.ReleaseScanBuffer(scanBuf)
 		var param any
 		helps.InitializeApplyPatchStream(ctx, to, responseFormat, req.Model, helps.ApplyPatchOriginalRequest(req, opts), bodyForTranslation, &param)
 		var upstreamMessageID string
 		var upstreamStreamErr error
-		var eventBuf bytes.Buffer
+		eventBuf := helps.AcquireSSEEventBuffer()
+		defer helps.ReleaseSSEEventBuffer(eventBuf)
 		upstreamCompleted := false
 		for scanner.Scan() {
 			line := scanner.Bytes()
@@ -586,7 +593,9 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 
 func validateClaudeStreamingResponse(data []byte) error {
 	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(nil, 52_428_800)
+	scanBuf := helps.AcquireScanBuffer()
+	scanner.Buffer(scanBuf, 52_428_800)
+	defer helps.ReleaseScanBuffer(scanBuf)
 
 	hasData := false
 	hasMessageStart := false
@@ -606,7 +615,7 @@ func validateClaudeStreamingResponse(data []byte) error {
 			return statusErr{code: http.StatusBadGateway, msg: "claude executor: upstream returned malformed stream data"}
 		}
 
-		root := gjson.ParseBytes(payload)
+		root := util.ParseGJSONBytesNoCopy(payload)
 		switch root.Get("type").String() {
 		case "error":
 			message := strings.TrimSpace(root.Get("error.message").String())

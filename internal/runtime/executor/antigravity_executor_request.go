@@ -59,7 +59,7 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 	payload = geminiToAntigravity(modelName, payload, projectID, derivedSessionIDs...)
 
 	// Cap maxOutputTokens to model's max_completion_tokens from registry
-	if maxOut := gjson.GetBytes(payload, "request.generationConfig.maxOutputTokens"); maxOut.Exists() && maxOut.Type == gjson.Number {
+	if maxOut := util.GetGJSONBytesNoCopy(payload, "request.generationConfig.maxOutputTokens"); maxOut.Exists() && maxOut.Type == gjson.Number {
 		if modelInfo := registry.LookupModelInfo(modelName, "antigravity"); modelInfo != nil && modelInfo.MaxCompletionTokens > 0 {
 			if int(maxOut.Int()) > modelInfo.MaxCompletionTokens {
 				payload, _ = sjson.SetBytes(payload, "request.generationConfig.maxOutputTokens", modelInfo.MaxCompletionTokens)
@@ -563,12 +563,12 @@ var (
 )
 
 func antigravityRequestNeedsSchemaSanitization(payload []byte) bool {
-	if gjson.GetBytes(payload, "request.tools.0").Exists() {
+	if util.GetGJSONBytesNoCopy(payload, "request.tools.0").Exists() {
 		return true
 	}
 	for _, container := range antigravityGenerationConfigContainers {
 		for _, key := range antigravityGenerationSchemaKeys {
-			if gjson.GetBytes(payload, container+"."+key).Exists() {
+			if util.GetGJSONBytesNoCopy(payload, container+"."+key).Exists() {
 				return true
 			}
 		}
@@ -651,7 +651,7 @@ func geminiToAntigravity(modelName string, payload []byte, projectID string, der
 	template = helps.SetStringIfDifferent(template, "userAgent", "antigravity")
 
 	isImageModel := strings.Contains(modelName, "image")
-	reqType := strings.TrimSpace(gjson.GetBytes(template, "requestType").String())
+	reqType := strings.TrimSpace(util.GetGJSONBytesNoCopy(template, "requestType").String())
 	if reqType == "" {
 		if isImageModel {
 			reqType = "image_gen"
@@ -671,7 +671,7 @@ func geminiToAntigravity(modelName string, payload []byte, projectID string, der
 		template, _ = sjson.SetBytes(template, "requestId", generateImageGenRequestID())
 	} else if reqType != "web_search" {
 		template, _ = sjson.SetBytes(template, "requestId", generateRequestID())
-		sessionID := strings.TrimSpace(gjson.GetBytes(template, "request.sessionId").String())
+		sessionID := strings.TrimSpace(util.GetGJSONBytesNoCopy(template, "request.sessionId").String())
 		if sessionID == "" && len(derivedSessionIDs) > 0 {
 			sessionID = strings.TrimSpace(derivedSessionIDs[0])
 		}
@@ -682,7 +682,7 @@ func geminiToAntigravity(modelName string, payload []byte, projectID string, der
 	}
 
 	template, _ = sjson.DeleteBytes(template, "request.safetySettings")
-	if toolConfig := gjson.GetBytes(template, "toolConfig"); toolConfig.Exists() && !gjson.GetBytes(template, "request.toolConfig").Exists() {
+	if toolConfig := util.GetGJSONBytesNoCopy(template, "toolConfig"); toolConfig.Exists() && !util.GetGJSONBytesNoCopy(template, "request.toolConfig").Exists() {
 		template, _ = sjson.SetRawBytes(template, "request.toolConfig", []byte(toolConfig.Raw))
 		template, _ = sjson.DeleteBytes(template, "toolConfig")
 	}

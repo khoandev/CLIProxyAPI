@@ -104,6 +104,10 @@ type Server struct {
 	keepAliveHeartbeat chan struct{}
 	keepAliveStop      chan struct{}
 
+	// inFlightRequests counts proxied requests currently being handled so the
+	// admission middleware can bound concurrency (and thus memory) under load.
+	inFlightRequests atomic.Int64
+
 	exampleAPIKeySafeModeEnabled bool
 	exampleAPIKeySafeModeActive  atomic.Bool
 }
@@ -239,6 +243,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	// Home heartbeat gate: when home is enabled, block all endpoints with 503 until the
 	// subscribe-config heartbeat connection is healthy.
 	engine.Use(s.homeHeartbeatMiddleware())
+	engine.Use(s.inFlightAdmissionMiddleware())
 	engine.Use(s.exampleAPIKeySafeModeMiddleware())
 
 	// Setup routes

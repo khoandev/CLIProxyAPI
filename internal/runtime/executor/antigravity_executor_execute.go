@@ -14,6 +14,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
@@ -245,9 +246,9 @@ func (e *AntigravityExecutor) executeCompaction(ctx context.Context, auth *clipr
 		return resp, fmt.Errorf("seal compaction capsule: %w", errSeal)
 	}
 
-	inputTokens := int(gjson.GetBytes(summaryResp.Payload, "usage.input_tokens").Int())
-	outputTokens := int(gjson.GetBytes(summaryResp.Payload, "usage.output_tokens").Int())
-	totalTokens := int(gjson.GetBytes(summaryResp.Payload, "usage.total_tokens").Int())
+	inputTokens := int(util.GetGJSONBytesNoCopy(summaryResp.Payload, "usage.input_tokens").Int())
+	outputTokens := int(util.GetGJSONBytesNoCopy(summaryResp.Payload, "usage.output_tokens").Int())
+	totalTokens := int(util.GetGJSONBytesNoCopy(summaryResp.Payload, "usage.total_tokens").Int())
 	if totalTokens == 0 && inputTokens == 0 {
 		usage := helps.ParseOpenAIUsage(summaryResp.Payload)
 		inputTokens = int(usage.InputTokens)
@@ -427,7 +428,9 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 			}
 		}()
 		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(nil, streamScannerBuffer)
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, streamScannerBuffer)
+		defer helps.ReleaseScanBuffer(scanBuf)
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			helps.AppendAPIResponseChunk(ctx, e.cfg, line)
@@ -445,7 +448,9 @@ func (e *AntigravityExecutor) executeClaudeNonStream(ctx context.Context, auth *
 			}
 			reporter.ObserveResponseModel(payload)
 
-			out <- cliproxyexecutor.StreamChunk{Payload: payload}
+			// The consumer reads chunk.Payload while this goroutine keeps scanning into
+			// the shared scan buffer, so the payload must be independently owned.
+			out <- cliproxyexecutor.StreamChunk{Payload: bytes.Clone(payload)}
 		}
 		if errScan := scanner.Err(); errScan != nil {
 			helps.RecordAPIResponseError(ctx, e.cfg, errScan)

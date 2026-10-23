@@ -200,7 +200,7 @@ func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool)
 		if claudeIncludePerTurnTiming(body, requested) {
 			betas = append(betas, claudePerTurnTimingBeta)
 		}
-		if !isClaudeSonnet5Model(gjson.GetBytes(body, "model").String()) {
+		if !isClaudeSonnet5Model(util.GetGJSONBytesNoCopy(body, "model").String()) {
 			betas = append(betas, claudeMidConvToolChangesBeta)
 		}
 		if claudeIncludeInlineTools(body, requested) {
@@ -225,19 +225,19 @@ func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool)
 	if !claudeUsesLegacySystemReminder(body) && claudeIncludeMidConvClearAt(body, requested) {
 		betas = append(betas, claudeMidConvSystemClearAtBeta)
 	}
-	if requested[claudeDangerousToolUseBeta] || gjson.GetBytes(body, "safeguards").Exists() {
+	if requested[claudeDangerousToolUseBeta] || util.GetGJSONBytesNoCopy(body, "safeguards").Exists() {
 		betas = append(betas, claudeDangerousToolUseBeta)
 	}
 	if claudeRequestSupportsEffort(body, requested) {
 		betas = append(betas, claudeEffortBeta)
 	}
 	isProbeOrHelper := helps.IsClaudeProbeOrHelperRequest(body)
-	if !isProbeOrHelper && (requested[claudeServerSideFallbackBeta] || gjson.GetBytes(body, "fallbacks").Exists()) {
+	if !isProbeOrHelper && (requested[claudeServerSideFallbackBeta] || util.GetGJSONBytesNoCopy(body, "fallbacks").Exists()) {
 		betas = append(betas, claudeServerSideFallbackBeta)
 	}
 	shouldIncludeFallbackCredit := requested[claudeFallbackCreditBeta] ||
-		gjson.GetBytes(body, "fallback_credit_token").Exists() ||
-		(oauthToken && gjson.GetBytes(body, "fallbacks").Exists())
+		util.GetGJSONBytesNoCopy(body, "fallback_credit_token").Exists() ||
+		(oauthToken && util.GetGJSONBytesNoCopy(body, "fallbacks").Exists())
 	if shouldIncludeFallbackCredit {
 		betas = append(betas, claudeFallbackCreditBeta)
 	}
@@ -249,9 +249,9 @@ func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool)
 			betas = append(betas, beta)
 		}
 	}
-	thinkingType := gjson.GetBytes(body, "thinking.type").String()
-	if requested[claudeThinkingBindingBeta] || gjson.GetBytes(body, "thinking.block_binding").Exists() ||
-		(claudeModelUsesProgressDisplay(gjson.GetBytes(body, "model").String()) && thinkingType == "adaptive") {
+	thinkingType := util.GetGJSONBytesNoCopy(body, "thinking.type").String()
+	if requested[claudeThinkingBindingBeta] || util.GetGJSONBytesNoCopy(body, "thinking.block_binding").Exists() ||
+		(claudeModelUsesProgressDisplay(util.GetGJSONBytesNoCopy(body, "model").String()) && thinkingType == "adaptive") {
 		betas = append(betas, claudeThinkingBindingBeta)
 	}
 	if !isProbeOrHelper && thinkingType != "disabled" && (requested[claudeThinkingDisplayUpdatesBeta] || claudeThinkingDisplayUpdates(body)) {
@@ -277,7 +277,7 @@ func claudeCodeCLIBetas(body []byte, requested map[string]bool, oauthToken bool)
 	if requested[claudePromptCachingEvictBeta] || bytes.Contains(body, []byte(`"evict_on_complete"`)) {
 		betas = append(betas, claudePromptCachingEvictBeta)
 	}
-	if diagnostics := gjson.GetBytes(body, "diagnostics"); diagnostics.IsObject() {
+	if diagnostics := util.GetGJSONBytesNoCopy(body, "diagnostics"); diagnostics.IsObject() {
 		betas = append(betas, claudeCacheDiagnosisBeta)
 	}
 	return strings.Join(betas, ",")
@@ -366,7 +366,7 @@ func claudeThinkingTypeAcceptsBlockBinding(model, thinkingType string) bool {
 // block, i.e. history Anthropic subjects to prefix binding validation.
 func claudeBodyHasSignedThinkingBlock(body []byte) bool {
 	found := false
-	gjson.GetBytes(body, "messages").ForEach(func(_, msg gjson.Result) bool {
+	util.GetGJSONBytesNoCopy(body, "messages").ForEach(func(_, msg gjson.Result) bool {
 		msg.Get("content").ForEach(func(_, block gjson.Result) bool {
 			switch strings.TrimSpace(block.Get("type").String()) {
 			case "thinking":
@@ -394,11 +394,11 @@ func claudeBodyHasSignedThinkingBlock(body []byte) bool {
 // user payload rules, which stay the final semantic barrier and may override or
 // filter the injected value.
 func applyClaudePreservedThinkingBinding(body []byte) []byte {
-	model := gjson.GetBytes(body, "model").String()
+	model := util.GetGJSONBytesNoCopy(body, "model").String()
 	if len(body) == 0 || !isClaudePreservedThinkingModel(model) || claudeToolChoiceForcesToolUse(body) {
 		return body
 	}
-	thinking := gjson.GetBytes(body, "thinking")
+	thinking := util.GetGJSONBytesNoCopy(body, "thinking")
 	if thinking.Exists() {
 		if !claudeThinkingTypeAcceptsBlockBinding(model, thinking.Get("type").String()) || thinking.Get("block_binding.prefix_mismatch_behavior").Exists() {
 			return body
@@ -424,13 +424,13 @@ func claudeModelUsesProgressDisplay(model string) bool {
 // translated caller did not choose one. An explicit summarized or omitted value
 // from Responses, Chat, or Gemini stays untouched.
 func applyClaudeCloakThinkingDisplay(body []byte, callerOwned bool) []byte {
-	if callerOwned || len(body) == 0 || gjson.GetBytes(body, "thinking.display").Exists() {
+	if callerOwned || len(body) == 0 || util.GetGJSONBytesNoCopy(body, "thinking.display").Exists() {
 		return body
 	}
-	if !claudeModelUsesProgressDisplay(gjson.GetBytes(body, "model").String()) {
+	if !claudeModelUsesProgressDisplay(util.GetGJSONBytesNoCopy(body, "model").String()) {
 		return body
 	}
-	switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String())) {
+	switch strings.ToLower(strings.TrimSpace(util.GetGJSONBytesNoCopy(body, "thinking.type").String())) {
 	case "adaptive", "enabled":
 	default:
 		return body
@@ -455,21 +455,21 @@ func claudeIncludePerTurnControl(body []byte, requested map[string]bool) bool {
 	if requested[claudePerTurnControlBeta] {
 		return true
 	}
-	return claudeModelHasPerTurnEffort(gjson.GetBytes(body, "model").String())
+	return claudeModelHasPerTurnEffort(util.GetGJSONBytesNoCopy(body, "model").String())
 }
 
 func claudeIncludePerTurnTiming(body []byte, requested map[string]bool) bool {
 	if requested[claudePerTurnTimingBeta] {
 		return true
 	}
-	if !claudeModelHasPerTurnTiming(gjson.GetBytes(body, "model").String()) {
+	if !claudeModelHasPerTurnTiming(util.GetGJSONBytesNoCopy(body, "model").String()) {
 		return false
 	}
-	if gjson.GetBytes(body, "output_config.timing").Exists() {
+	if util.GetGJSONBytesNoCopy(body, "output_config.timing").Exists() {
 		return true
 	}
 	found := false
-	gjson.GetBytes(body, "messages").ForEach(func(_, msg gjson.Result) bool {
+	util.GetGJSONBytesNoCopy(body, "messages").ForEach(func(_, msg gjson.Result) bool {
 		if msg.Get("output_config.timing").Exists() {
 			found = true
 			return false
@@ -484,7 +484,7 @@ func claudeIncludeInlineTools(body []byte, requested map[string]bool) bool {
 		return true
 	}
 	found := false
-	gjson.GetBytes(body, "messages").ForEach(func(_, msg gjson.Result) bool {
+	util.GetGJSONBytesNoCopy(body, "messages").ForEach(func(_, msg gjson.Result) bool {
 		msg.Get("content").ForEach(func(_, block gjson.Result) bool {
 			if strings.EqualFold(strings.TrimSpace(block.Get("type").String()), "tool_addition") && block.Get("tool.definition").Exists() {
 				found = true
@@ -498,11 +498,11 @@ func claudeIncludeInlineTools(body []byte, requested map[string]bool) bool {
 }
 
 func claudeIncludeMidConvClearAt(body []byte, requested map[string]bool) bool {
-	if requested[claudeMidConvSystemClearAtBeta] || claudeModelUsesProgressDisplay(gjson.GetBytes(body, "model").String()) {
+	if requested[claudeMidConvSystemClearAtBeta] || claudeModelUsesProgressDisplay(util.GetGJSONBytesNoCopy(body, "model").String()) {
 		return true
 	}
 	found := false
-	gjson.GetBytes(body, "messages").ForEach(func(_, msg gjson.Result) bool {
+	util.GetGJSONBytesNoCopy(body, "messages").ForEach(func(_, msg gjson.Result) bool {
 		if msg.Get("clear_at").Exists() {
 			found = true
 			return false
@@ -517,11 +517,11 @@ func claudeRequestSupportsEffort(body []byte, requested map[string]bool) bool {
 		if helps.IsClaudeProbeOrHelperRequest(body) {
 			return false
 		}
-		model := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "model").String()))
+		model := strings.ToLower(strings.TrimSpace(util.GetGJSONBytesNoCopy(body, "model").String()))
 		if isClaudeHaikuModel(model) {
 			return false
 		}
-		thinkingType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String()))
+		thinkingType := strings.ToLower(strings.TrimSpace(util.GetGJSONBytesNoCopy(body, "thinking.type").String()))
 		if thinkingType == "disabled" {
 			return false
 		}
@@ -533,7 +533,7 @@ func claudeRequestSupportsEffort(body []byte, requested map[string]bool) bool {
 }
 
 func claudeThinkingDisplayUpdates(body []byte) bool {
-	display := gjson.GetBytes(body, "thinking.display")
+	display := util.GetGJSONBytesNoCopy(body, "thinking.display")
 	return display.Type == gjson.String && strings.EqualFold(strings.TrimSpace(display.String()), "updates")
 }
 
@@ -546,7 +546,7 @@ func claudeThinkingDisplayUpdates(body []byte) bool {
 // the same beta and are just as visible in the body, so callers using them keep
 // working without requesting the beta explicitly.
 func claudeBodyUsesAdvancedToolUse(body []byte) bool {
-	tools := gjson.GetBytes(body, "tools")
+	tools := util.GetGJSONBytesNoCopy(body, "tools")
 	if !tools.IsArray() {
 		return false
 	}
@@ -565,7 +565,7 @@ func claudeBodyUsesAdvancedToolUse(body []byte) bool {
 // claudeBodyHasAdvisorTool reports whether the request body declares an
 // advisor server tool.
 func claudeBodyHasAdvisorTool(body []byte) bool {
-	tools := gjson.GetBytes(body, "tools")
+	tools := util.GetGJSONBytesNoCopy(body, "tools")
 	if !tools.IsArray() {
 		return false
 	}
@@ -589,7 +589,7 @@ func claudeBodyHasAdvisorTool(body []byte) bool {
 // absent, and a native 2.1.220 CLI run with showThinkingSummaries enabled sends
 // display=summarized without the beta.
 func claudeThinkingDisplaySet(body []byte) bool {
-	display := gjson.GetBytes(body, "thinking.display")
+	display := util.GetGJSONBytesNoCopy(body, "thinking.display")
 	return display.Type == gjson.String && strings.TrimSpace(display.String()) != ""
 }
 
@@ -603,7 +603,7 @@ func claudeRequestUsesFastMode(body []byte, requested map[string]bool) bool {
 	if requested[claudeFastModeBeta] {
 		return true
 	}
-	speed := gjson.GetBytes(body, "speed")
+	speed := util.GetGJSONBytesNoCopy(body, "speed")
 	return speed.Type == gjson.String && strings.EqualFold(strings.TrimSpace(speed.String()), "fast")
 }
 
@@ -636,7 +636,7 @@ func stripClaudeFastModeIfDisabled(cfg *config.Config, body []byte, extraBetas [
 		return body, extraBetas
 	}
 	// Strip speed field if it is "fast".
-	if speed := gjson.GetBytes(body, "speed"); speed.Type == gjson.String &&
+	if speed := util.GetGJSONBytesNoCopy(body, "speed"); speed.Type == gjson.String &&
 		strings.EqualFold(strings.TrimSpace(speed.String()), "fast") {
 		body, _ = sjson.DeleteBytes(body, "speed")
 	}
@@ -876,7 +876,7 @@ func classifyClaudeUpstreamErrorWithCooling(statusCode int, headers http.Header,
 // claudeBodyIndicatesFastModeCredits matches Anthropic's fast-mode entitlement
 // refusal without matching a genuine rate limit, which never mentions fast mode.
 func claudeBodyIndicatesFastModeCredits(body []byte) bool {
-	message := strings.ToLower(gjson.GetBytes(body, "error.message").String())
+	message := strings.ToLower(util.GetGJSONBytesNoCopy(body, "error.message").String())
 	if message == "" {
 		message = strings.ToLower(string(body))
 	}
@@ -926,7 +926,7 @@ func isAnthropicUpstreamBase(baseURL string) bool {
 // extractAndRemoveBetas extracts the "betas" array from the body and removes it.
 // Returns the extracted betas as a string slice and the modified body.
 func extractAndRemoveBetas(body []byte) ([]string, []byte) {
-	betasResult := gjson.GetBytes(body, "betas")
+	betasResult := util.GetGJSONBytesNoCopy(body, "betas")
 	if !betasResult.Exists() {
 		return nil, body
 	}
@@ -945,7 +945,7 @@ func extractAndRemoveBetas(body []byte) ([]string, []byte) {
 }
 
 func claudeToolChoiceForcesToolUse(body []byte) bool {
-	toolChoiceType := gjson.GetBytes(body, "tool_choice.type").String()
+	toolChoiceType := util.GetGJSONBytesNoCopy(body, "tool_choice.type").String()
 	return toolChoiceType == "any" || toolChoiceType == "tool"
 }
 
@@ -960,7 +960,7 @@ func disableThinkingIfToolChoiceForced(body []byte) []byte {
 		// Adaptive thinking may also set output_config.effort; remove it to avoid
 		// leaking thinking controls when tool_choice forces tool use.
 		body, _ = sjson.DeleteBytes(body, "output_config.effort")
-		if oc := gjson.GetBytes(body, "output_config"); oc.Exists() && oc.IsObject() && len(oc.Map()) == 0 {
+		if oc := util.GetGJSONBytesNoCopy(body, "output_config"); oc.Exists() && oc.IsObject() && len(oc.Map()) == 0 {
 			body, _ = sjson.DeleteBytes(body, "output_config")
 		}
 	}
@@ -983,7 +983,7 @@ func disableThinkingIfToolChoiceForced(body []byte) []byte {
 //   - otherwise: temperature and top_p cannot both be specified
 func normalizeClaudeSamplingForUpstream(body []byte, nativeOwned bool) []byte {
 	thinkingActive := false
-	switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String())) {
+	switch strings.ToLower(strings.TrimSpace(util.GetGJSONBytesNoCopy(body, "thinking.type").String())) {
 	case "enabled", "adaptive", "auto":
 		thinkingActive = true
 	}
@@ -998,10 +998,10 @@ func normalizeClaudeSamplingForUpstream(body []byte, nativeOwned bool) []byte {
 	}
 
 	if thinkingActive {
-		if temperature := gjson.GetBytes(body, "temperature"); temperature.Exists() && temperature.Num != 1 {
+		if temperature := util.GetGJSONBytesNoCopy(body, "temperature"); temperature.Exists() && temperature.Num != 1 {
 			body, _ = sjson.DeleteBytes(body, "temperature")
 		}
-		if topP := gjson.GetBytes(body, "top_p"); topP.Exists() && topP.Num < 0.95 {
+		if topP := util.GetGJSONBytesNoCopy(body, "top_p"); topP.Exists() && topP.Num < 0.95 {
 			body, _ = sjson.DeleteBytes(body, "top_p")
 		}
 		body, _ = sjson.DeleteBytes(body, "top_k")
@@ -1009,7 +1009,7 @@ func normalizeClaudeSamplingForUpstream(body []byte, nativeOwned bool) []byte {
 	}
 	// Anthropic accepts either one but not both; temperature is the knob native
 	// Claude Code actually sends, so top_p is the one that gives way.
-	if gjson.GetBytes(body, "temperature").Exists() && gjson.GetBytes(body, "top_p").Exists() {
+	if util.GetGJSONBytesNoCopy(body, "temperature").Exists() && util.GetGJSONBytesNoCopy(body, "top_p").Exists() {
 		body, _ = sjson.DeleteBytes(body, "top_p")
 	}
 	return body
@@ -1390,7 +1390,7 @@ func applyClaudeHeadersWithNativeProfile(
 	if preserveCallerFingerprint {
 		// Caller-owned mode preserves both header and body-lifted betas verbatim.
 		// The explicit speed=fast request still needs its protocol beta.
-		if strings.EqualFold(strings.TrimSpace(gjson.GetBytes(body, "speed").String()), "fast") {
+		if strings.EqualFold(strings.TrimSpace(util.GetGJSONBytesNoCopy(body, "speed").String()), "fast") {
 			appendBeta(claudeFastModeBeta)
 		}
 		for _, beta := range extraBetas {
@@ -1429,10 +1429,10 @@ func applyClaudeHeadersWithNativeProfile(
 			baseBetas = withoutClaudeBeta(baseBetas, claudeOAuthBeta)
 			baseBetas = withoutClaudeBeta(baseBetas, claudeRedactThinkingBeta)
 			baseBetas = withoutClaudeBeta(baseBetas, claudeAFKModeBeta)
-			if !gjson.GetBytes(body, "diagnostics").Exists() {
+			if !util.GetGJSONBytesNoCopy(body, "diagnostics").Exists() {
 				baseBetas = withoutClaudeBeta(baseBetas, claudeCacheDiagnosisBeta)
 			}
-			if !gjson.GetBytes(body, "fallback_credit_token").Exists() {
+			if !util.GetGJSONBytesNoCopy(body, "fallback_credit_token").Exists() {
 				baseBetas = withoutClaudeBeta(baseBetas, claudeFallbackCreditBeta)
 			}
 			if !helps.ClaudePayloadHas1hTTL(body) {
@@ -1449,7 +1449,7 @@ func applyClaudeHeadersWithNativeProfile(
 			baseBetas = withoutClaudeBeta(baseBetas, claudeThinkingDisplayUpdatesBeta)
 			baseBetas = withoutClaudeBeta(baseBetas, claudeExtendedCacheTTLBeta)
 		}
-		reqThinkingType := gjson.GetBytes(body, "thinking.type").String()
+		reqThinkingType := util.GetGJSONBytesNoCopy(body, "thinking.type").String()
 		if reqThinkingType == "disabled" {
 			baseBetas = withoutClaudeBeta(baseBetas, claudeThinkingDisplayUpdatesBeta)
 		}
@@ -1459,14 +1459,14 @@ func applyClaudeHeadersWithNativeProfile(
 		if !reqProbeOrHelper && !countTokens && helps.ClaudePayloadHas1hTTL(body) {
 			baseBetas = withClaudeExtendedCacheTTLBeta(baseBetas)
 		}
-		reqModel := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "model").String()))
-		if isClaudeHaikuModel(reqModel) && !gjson.GetBytes(body, "fallbacks").Exists() && !helperProfile {
+		reqModel := strings.ToLower(strings.TrimSpace(util.GetGJSONBytesNoCopy(body, "model").String()))
+		if isClaudeHaikuModel(reqModel) && !util.GetGJSONBytesNoCopy(body, "fallbacks").Exists() && !helperProfile {
 			baseBetas = withoutClaudeBeta(baseBetas, claudeServerSideFallbackBeta)
 		}
 		// A body carrying thinking.block_binding is rejected upstream unless
 		// the binding-controls beta travels with it, in every fingerprint
 		// mode (cloaked, caller-owned, and confirmed passthrough alike).
-		if gjson.GetBytes(body, "thinking.block_binding").Exists() {
+		if util.GetGJSONBytesNoCopy(body, "thinking.block_binding").Exists() {
 			baseBetas = withClaudeBetaAppended(baseBetas, claudeThinkingBindingBeta)
 		}
 		// Operator overrides get the last word over the derived and caller betas:
@@ -1782,7 +1782,7 @@ func claudeCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
 // claudePayloadHasMidSystemMessage reports whether the caller placed a
 // {"role":"system"} turn inside messages.
 func claudePayloadHasMidSystemMessage(payload []byte) bool {
-	messages := gjson.GetBytes(payload, "messages")
+	messages := util.GetGJSONBytesNoCopy(payload, "messages")
 	if !messages.IsArray() {
 		return false
 	}
@@ -1798,7 +1798,7 @@ func claudePayloadHasMidSystemMessage(payload []byte) bool {
 }
 
 func rebuildMidSystemMessagesToTopLevel(payload []byte) []byte {
-	messages := gjson.GetBytes(payload, "messages")
+	messages := util.GetGJSONBytesNoCopy(payload, "messages")
 	if !messages.IsArray() {
 		return payload
 	}
@@ -1817,7 +1817,7 @@ func rebuildMidSystemMessagesToTopLevel(payload []byte) []byte {
 		return payload
 	}
 
-	systemParts := claudeSystemTextParts(gjson.GetBytes(payload, "system"))
+	systemParts := claudeSystemTextParts(util.GetGJSONBytesNoCopy(payload, "system"))
 	systemParts = append(systemParts, movedSystemParts...)
 	if len(systemParts) > 0 {
 		if updated, errSetSystem := sjson.SetRawBytes(payload, "system", rawJSONArray(systemParts)); errSetSystem == nil {
@@ -1966,7 +1966,7 @@ func remapOAuthToolNamesWithBatchedEdits(body []byte, mcpAliases claudeMCPAliasO
 	// Build one request-specific forward map from declarations. Every client
 	// tool, including typed custom declarations and names resembling Claude
 	// built-ins, gets an MCP alias. Historical references use this same map.
-	tools := gjson.GetBytes(body, "tools")
+	tools := util.GetGJSONBytesNoCopy(body, "tools")
 	forwardMap := make(map[string]string)
 	protectedNames := make(map[string]bool)
 	reservedNames := helps.AugmentClaudeBuiltinToolRegistry(body, nil)
@@ -2096,7 +2096,7 @@ func remapOAuthToolNamesWithBatchedEdits(body []byte, mcpAliases claudeMCPAliasO
 	}
 
 	// 2. Rename tool_choice if it references a declared client tool.
-	toolChoice := gjson.GetBytes(body, "tool_choice")
+	toolChoice := util.GetGJSONBytesNoCopy(body, "tool_choice")
 	if toolChoice.Get("type").String() == "tool" {
 		nameResult := toolChoice.Get("name")
 		tcName := nameResult.String()
@@ -2110,7 +2110,7 @@ func remapOAuthToolNamesWithBatchedEdits(body []byte, mcpAliases claudeMCPAliasO
 
 	// 3. Rename tool references in messages while every Result.Index still
 	// points into the original request bytes.
-	messages := gjson.GetBytes(body, "messages")
+	messages := util.GetGJSONBytesNoCopy(body, "messages")
 	validOffsets := true
 	if messages.Exists() && messages.IsArray() {
 		messages.ForEach(func(_, msg gjson.Result) bool {
@@ -2255,7 +2255,7 @@ func remapOAuthToolNamesWithOptionsLegacy(body []byte, mcpAliases claudeMCPAlias
 	// Build one request-specific forward map from declarations. Every client
 	// tool, including typed custom declarations and names resembling Claude
 	// built-ins, gets an MCP alias. Historical references use this same map.
-	tools := gjson.GetBytes(body, "tools")
+	tools := util.GetGJSONBytesNoCopy(body, "tools")
 	forwardMap := make(map[string]string)
 	protectedNames := make(map[string]bool)
 	reservedNames := helps.AugmentClaudeBuiltinToolRegistry(body, nil)
@@ -2366,9 +2366,9 @@ func remapOAuthToolNamesWithOptionsLegacy(body []byte, mcpAliases claudeMCPAlias
 	}
 
 	// 2. Rename tool_choice if it references a declared client tool.
-	toolChoiceType := gjson.GetBytes(body, "tool_choice.type").String()
+	toolChoiceType := util.GetGJSONBytesNoCopy(body, "tool_choice.type").String()
 	if toolChoiceType == "tool" {
-		tcName := gjson.GetBytes(body, "tool_choice.name").String()
+		tcName := util.GetGJSONBytesNoCopy(body, "tool_choice.name").String()
 		if newName, renamed := rewriteName(tcName); renamed {
 			body, _ = sjson.SetBytes(body, "tool_choice.name", newName)
 			recordRename(tcName, newName)
@@ -2376,7 +2376,7 @@ func remapOAuthToolNamesWithOptionsLegacy(body []byte, mcpAliases claudeMCPAlias
 	}
 
 	// 3. Rename tool references in messages
-	messages := gjson.GetBytes(body, "messages")
+	messages := util.GetGJSONBytesNoCopy(body, "messages")
 	if messages.Exists() && messages.IsArray() {
 		messages.ForEach(func(msgIndex, msg gjson.Result) bool {
 			content := msg.Get("content")
@@ -2749,7 +2749,7 @@ func reverseRemapOAuthToolNames(body []byte, reverseMap map[string]string) ([]by
 	if len(reverseMap) == 0 {
 		return body, nil
 	}
-	content := gjson.GetBytes(body, "content")
+	content := util.GetGJSONBytesNoCopy(body, "content")
 	if !content.Exists() || !content.IsArray() {
 		return body, nil
 	}
@@ -2837,7 +2837,7 @@ func reverseRemapOAuthToolNamesFromStreamLine(line []byte, reverseMap map[string
 		return line, nil
 	}
 
-	contentBlock := gjson.GetBytes(payload, "content_block")
+	contentBlock := util.GetGJSONBytesNoCopy(payload, "content_block")
 	if !contentBlock.Exists() {
 		return line, nil
 	}
@@ -2929,7 +2929,7 @@ func applyClaudeToolPrefix(body []byte, prefix string) []byte {
 	// augment it with any typed built-ins present in the current request body.
 	builtinTools := helps.AugmentClaudeBuiltinToolRegistry(body, nil)
 
-	if tools := gjson.GetBytes(body, "tools"); tools.Exists() && tools.IsArray() {
+	if tools := util.GetGJSONBytesNoCopy(body, "tools"); tools.Exists() && tools.IsArray() {
 		tools.ForEach(func(index, tool gjson.Result) bool {
 			// Skip built-in tools (web_search, code_execution, etc.) which have
 			// a "type" field and require their name to remain unchanged.
@@ -2949,14 +2949,14 @@ func applyClaudeToolPrefix(body []byte, prefix string) []byte {
 		})
 	}
 
-	if gjson.GetBytes(body, "tool_choice.type").String() == "tool" {
-		name := gjson.GetBytes(body, "tool_choice.name").String()
+	if util.GetGJSONBytesNoCopy(body, "tool_choice.type").String() == "tool" {
+		name := util.GetGJSONBytesNoCopy(body, "tool_choice.name").String()
 		if name != "" && !strings.HasPrefix(name, prefix) && !builtinTools[name] && !helps.IsClaudeMCPToolName(name) {
 			body, _ = sjson.SetBytes(body, "tool_choice.name", prefix+name)
 		}
 	}
 
-	if messages := gjson.GetBytes(body, "messages"); messages.Exists() && messages.IsArray() {
+	if messages := util.GetGJSONBytesNoCopy(body, "messages"); messages.Exists() && messages.IsArray() {
 		messages.ForEach(func(msgIndex, msg gjson.Result) bool {
 			content := msg.Get("content")
 			if !content.Exists() || !content.IsArray() {
@@ -3008,7 +3008,7 @@ func stripClaudeToolPrefixFromResponse(body []byte, prefix string) []byte {
 	if prefix == "" {
 		return body
 	}
-	content := gjson.GetBytes(body, "content")
+	content := util.GetGJSONBytesNoCopy(body, "content")
 	if !content.Exists() || !content.IsArray() {
 		return body
 	}
@@ -3058,7 +3058,7 @@ func stripClaudeToolPrefixFromStreamLine(line []byte, prefix string) []byte {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return line
 	}
-	contentBlock := gjson.GetBytes(payload, "content_block")
+	contentBlock := util.GetGJSONBytesNoCopy(payload, "content_block")
 	if !contentBlock.Exists() {
 		return line
 	}

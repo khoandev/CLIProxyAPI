@@ -188,7 +188,7 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 							if strings.TrimSpace(txt) == "" {
 								if part.Get("cache_control").Exists() && len(systemBlocks) > systemStart {
 									prevIdx := len(systemBlocks) - 1
-									if !gjson.GetBytes(systemBlocks[prevIdx], "cache_control").Exists() {
+									if !util.GetGJSONBytesNoCopy(systemBlocks[prevIdx], "cache_control").Exists() {
 										systemBlocks[prevIdx] = common.AttachCacheControl(systemBlocks[prevIdx], part)
 									}
 								}
@@ -204,7 +204,7 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 					// Message-level cache_control applies to the last system block from this message.
 					if message.Get("cache_control").Exists() && len(systemBlocks) > systemStart {
 						lastIdx := len(systemBlocks) - 1
-						if !gjson.GetBytes(systemBlocks[lastIdx], "cache_control").Exists() {
+						if !util.GetGJSONBytesNoCopy(systemBlocks[lastIdx], "cache_control").Exists() {
 							systemBlocks[lastIdx] = common.AttachCacheControl(systemBlocks[lastIdx], message)
 						}
 					}
@@ -233,7 +233,7 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 						} else if partType := part.Get("type").String(); partType == "text" {
 							if part.Get("cache_control").Exists() && len(contentBlocks) > 0 {
 								prevIdx := len(contentBlocks) - 1
-								if !gjson.GetBytes(contentBlocks[prevIdx], "cache_control").Exists() {
+								if !util.GetGJSONBytesNoCopy(contentBlocks[prevIdx], "cache_control").Exists() {
 									contentBlocks[prevIdx] = common.AttachCacheControl(contentBlocks[prevIdx], part)
 								}
 							}
@@ -409,7 +409,7 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 					anthropicTool, _ = sjson.SetRawBytes(anthropicTool, "input_schema", util.NormalizeClaudeToolInputSchema(nil))
 				}
 				anthropicTool = common.AttachCacheControl(anthropicTool, tool)
-				if !gjson.GetBytes(anthropicTool, "cache_control").Exists() {
+				if !util.GetGJSONBytesNoCopy(anthropicTool, "cache_control").Exists() {
 					anthropicTool = common.AttachCacheControl(anthropicTool, function)
 				}
 				strict := function.Get("strict")
@@ -484,11 +484,11 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 	}
 
 	if parallelToolCalls := root.Get("parallel_tool_calls"); parallelToolCalls.Type == gjson.False {
-		if gjson.GetBytes(out, "tool_choice").Exists() {
-			if gjson.GetBytes(out, "tool_choice.type").String() != "none" {
+		if util.GetGJSONBytesNoCopy(out, "tool_choice").Exists() {
+			if util.GetGJSONBytesNoCopy(out, "tool_choice.type").String() != "none" {
 				out, _ = sjson.SetBytes(out, "tool_choice.disable_parallel_tool_use", true)
 			}
-		} else if gjson.GetBytes(out, "tools").Exists() {
+		} else if util.GetGJSONBytesNoCopy(out, "tools").Exists() {
 			out, _ = sjson.SetRawBytes(out, "tool_choice", []byte(`{"type":"auto","disable_parallel_tool_use":true}`))
 		}
 	}

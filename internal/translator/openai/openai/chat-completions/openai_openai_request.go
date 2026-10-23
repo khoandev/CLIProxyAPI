@@ -3,6 +3,7 @@
 package chat_completions
 
 import (
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -18,7 +19,7 @@ import (
 // Returns:
 //   - []byte: The transformed request data in OpenAI API format
 func ConvertOpenAIRequestToOpenAI(modelName string, inputRawJSON []byte, _ bool) ([]byte, error) {
-	currentModel := gjson.GetBytes(inputRawJSON, "model")
+	currentModel := util.GetGJSONBytesNoCopy(inputRawJSON, "model")
 	if currentModel.Type == gjson.String && currentModel.String() == modelName {
 		return inputRawJSON, nil
 	}

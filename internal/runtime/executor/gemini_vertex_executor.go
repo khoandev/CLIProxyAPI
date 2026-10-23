@@ -824,7 +824,9 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 			}
 		}()
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, streamScannerBuffer)
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, streamScannerBuffer)
+		defer helps.ReleaseScanBuffer(scanBuf)
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var streamUsage helps.StreamUsageBuffer
 		defer streamUsage.Publish(ctx, reporter)
@@ -1032,7 +1034,9 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 			}
 		}()
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, streamScannerBuffer)
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, streamScannerBuffer)
+		defer helps.ReleaseScanBuffer(scanBuf)
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var streamUsage helps.StreamUsageBuffer
 		defer streamUsage.Publish(ctx, reporter)
@@ -1764,7 +1768,9 @@ func (e *GeminiVertexExecutor) executeInteractionsStream(ctx context.Context, au
 			}
 		}()
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, helps.StreamScannerBuffer)
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, helps.StreamScannerBuffer)
+		defer helps.ReleaseScanBuffer(scanBuf)
 		originalRequest := opts.OriginalRequest
 		if len(originalRequest) == 0 {
 			originalRequest = req.Payload

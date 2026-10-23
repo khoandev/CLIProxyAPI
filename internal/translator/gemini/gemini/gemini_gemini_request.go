@@ -29,7 +29,7 @@ func ConvertGeminiRequestToGemini(_ string, inputRawJSON []byte, _ bool) ([]byte
 		return common.AttachDefaultSafetySettings(rawJSON, "safetySettings"), nil
 	}
 
-	toolsResult := gjson.GetBytes(rawJSON, "tools")
+	toolsResult := util.GetGJSONBytesNoCopy(rawJSON, "tools")
 	if toolsResult.Exists() && toolsResult.IsArray() {
 		var toolItems [][]byte
 		toolsChanged := false
@@ -42,7 +42,7 @@ func ConvertGeminiRequestToGemini(_ string, inputRawJSON []byte, _ bool) ([]byte
 				toolChanged = true
 			}
 
-			declarations := gjson.GetBytes(tool, "function_declarations")
+			declarations := util.GetGJSONBytesNoCopy(tool, "function_declarations")
 			if declarations.IsArray() {
 				var declarationItems [][]byte
 				declarationsChanged := false
@@ -128,7 +128,7 @@ func ConvertGeminiRequestToGemini(_ string, inputRawJSON []byte, _ bool) ([]byte
 
 	out = signature.SanitizeGeminiRequestThoughtSignatures(out, "contents")
 
-	if gjson.GetBytes(rawJSON, "generationConfig.responseSchema").Exists() {
+	if util.GetGJSONBytesNoCopy(rawJSON, "generationConfig.responseSchema").Exists() {
 		strJson, _ := util.RenameKey(string(out), "generationConfig.responseSchema", "generationConfig.responseJsonSchema")
 		out = []byte(strJson)
 	}

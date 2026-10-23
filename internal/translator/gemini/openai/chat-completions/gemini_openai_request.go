@@ -43,13 +43,13 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 	out, _ = sjson.SetBytes(out, "model", modelName)
 
 	// Let user-provided generationConfig pass through
-	if genConfig := gjson.GetBytes(rawJSON, "generationConfig"); genConfig.Exists() {
+	if genConfig := util.GetGJSONBytesNoCopy(rawJSON, "generationConfig"); genConfig.Exists() {
 		out, _ = sjson.SetRawBytes(out, "generationConfig", []byte(genConfig.Raw))
 	}
 
 	// Apply thinking configuration: convert OpenAI reasoning_effort to Gemini thinkingConfig.
 	// Inline translation-only mapping; capability checks happen later in ApplyThinking.
-	re := gjson.GetBytes(rawJSON, "reasoning_effort")
+	re := util.GetGJSONBytesNoCopy(rawJSON, "reasoning_effort")
 	if re.Exists() {
 		effort := strings.ToLower(strings.TrimSpace(re.String()))
 		if effort != "" {
@@ -63,25 +63,25 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 	}
 
 	// Temperature/top_p/top_k
-	if tr := gjson.GetBytes(rawJSON, "temperature"); tr.Exists() && tr.Type == gjson.Number {
+	if tr := util.GetGJSONBytesNoCopy(rawJSON, "temperature"); tr.Exists() && tr.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "generationConfig.temperature", tr.Num)
 	}
-	if tpr := gjson.GetBytes(rawJSON, "top_p"); tpr.Exists() && tpr.Type == gjson.Number {
+	if tpr := util.GetGJSONBytesNoCopy(rawJSON, "top_p"); tpr.Exists() && tpr.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "generationConfig.topP", tpr.Num)
 	}
-	if tkr := gjson.GetBytes(rawJSON, "top_k"); tkr.Exists() && tkr.Type == gjson.Number {
+	if tkr := util.GetGJSONBytesNoCopy(rawJSON, "top_k"); tkr.Exists() && tkr.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "generationConfig.topK", tkr.Num)
 	}
 
 	// OpenAI max_tokens / max_completion_tokens -> Gemini generationConfig.maxOutputTokens
-	if mt := gjson.GetBytes(rawJSON, "max_tokens"); mt.Exists() && mt.Type == gjson.Number {
+	if mt := util.GetGJSONBytesNoCopy(rawJSON, "max_tokens"); mt.Exists() && mt.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "generationConfig.maxOutputTokens", mt.Num)
-	} else if mct := gjson.GetBytes(rawJSON, "max_completion_tokens"); mct.Exists() && mct.Type == gjson.Number {
+	} else if mct := util.GetGJSONBytesNoCopy(rawJSON, "max_completion_tokens"); mct.Exists() && mct.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "generationConfig.maxOutputTokens", mct.Num)
 	}
 
 	// Candidate count (OpenAI 'n' parameter)
-	if n := gjson.GetBytes(rawJSON, "n"); n.Exists() && n.Type == gjson.Number {
+	if n := util.GetGJSONBytesNoCopy(rawJSON, "n"); n.Exists() && n.Type == gjson.Number {
 		if val := n.Int(); val > 1 {
 			out, _ = sjson.SetBytes(out, "generationConfig.candidateCount", val)
 		}
@@ -92,7 +92,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 
 	// Map OpenAI modalities -> Gemini generationConfig.responseModalities
 	// e.g. "modalities": ["image", "text"] -> ["IMAGE", "TEXT"]
-	if mods := gjson.GetBytes(rawJSON, "modalities"); mods.Exists() && mods.IsArray() {
+	if mods := util.GetGJSONBytesNoCopy(rawJSON, "modalities"); mods.Exists() && mods.IsArray() {
 		var responseMods []string
 		for _, m := range mods.Array() {
 			switch strings.ToLower(m.String()) {
@@ -109,7 +109,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 
 	// OpenRouter-style image_config support
 	// If the input uses top-level image_config.aspect_ratio, map it into generationConfig.imageConfig.aspectRatio.
-	if imgCfg := gjson.GetBytes(rawJSON, "image_config"); imgCfg.Exists() && imgCfg.IsObject() {
+	if imgCfg := util.GetGJSONBytesNoCopy(rawJSON, "image_config"); imgCfg.Exists() && imgCfg.IsObject() {
 		if ar := imgCfg.Get("aspect_ratio"); ar.Exists() && ar.Type == gjson.String {
 			out, _ = sjson.SetBytes(out, "generationConfig.imageConfig.aspectRatio", ar.Str)
 		}
@@ -119,7 +119,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 	}
 
 	// messages -> systemInstruction + contents
-	messages := gjson.GetBytes(rawJSON, "messages")
+	messages := util.GetGJSONBytesNoCopy(rawJSON, "messages")
 	if messages.IsArray() {
 		arr := messages.Array()
 		systemParts := make([][]byte, 0, 2)
@@ -299,7 +299,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 			systemInstruction := geminiContentNode("user", systemParts)
 			out, _ = sjson.SetRawBytes(out, "systemInstruction", systemInstruction)
 		}
-		if len(contentItems) > 0 && gjson.GetBytes(contentItems[len(contentItems)-1], "role").String() == "model" {
+		if len(contentItems) > 0 && util.GetGJSONBytesNoCopy(contentItems[len(contentItems)-1], "role").String() == "model" {
 			contentItems = contentItems[:len(contentItems)-1]
 		}
 		out = translatorcommon.SetRawArrayItems(out, "contents", contentItems)
@@ -309,7 +309,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 	allowedToolNames := make(map[string]struct{})
 	isAllowedTools := false
 	allowedMode := "auto"
-	if toolChoice := gjson.GetBytes(rawJSON, "tool_choice"); toolChoice.Exists() && toolChoice.IsObject() && toolChoice.Get("type").String() == "allowed_tools" {
+	if toolChoice := util.GetGJSONBytesNoCopy(rawJSON, "tool_choice"); toolChoice.Exists() && toolChoice.IsObject() && toolChoice.Get("type").String() == "allowed_tools" {
 		isAllowedTools = true
 		toolList := toolChoice.Get("allowed_tools.tools").Array()
 		if len(toolList) == 0 {
@@ -337,7 +337,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 	sanitizedToOriginalCounts := make(map[string]int)
 	var functionDeclarations [][]byte
 	hasStrictTool := false
-	tools := gjson.GetBytes(rawJSON, "tools")
+	tools := util.GetGJSONBytesNoCopy(rawJSON, "tools")
 	toolResults := tools.Array()
 	if tools.IsArray() && len(toolResults) > 0 {
 		functionDeclarations = make([][]byte, 0, len(toolResults))
@@ -398,13 +398,13 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 					if nameResult.Type != gjson.String || sanitizedName != originalName {
 						fnRawBytes, _ = sjson.SetBytes(fnRawBytes, "name", sanitizedName)
 					}
-					if parameters := gjson.GetBytes(fnRawBytes, "parametersJsonSchema"); parameters.Exists() {
+					if parameters := util.GetGJSONBytesNoCopy(fnRawBytes, "parametersJsonSchema"); parameters.Exists() {
 						cleanedParameters := util.CleanJSONSchemaForGeminiJSONSchema(parameters.Raw)
 						if cleanedParameters != parameters.Raw {
 							fnRawBytes, _ = sjson.SetRawBytes(fnRawBytes, "parametersJsonSchema", []byte(cleanedParameters))
 						}
 					}
-					strictVal := gjson.GetBytes(fnRawBytes, "strict")
+					strictVal := util.GetGJSONBytesNoCopy(fnRawBytes, "strict")
 					if !strictVal.Exists() {
 						strictVal = fn.Get("strict")
 						if !strictVal.Exists() {
@@ -415,7 +415,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 						if strictVal.Type == gjson.True {
 							hasStrictTool = true
 						}
-						if gjson.GetBytes(fnRawBytes, "strict").Exists() {
+						if util.GetGJSONBytesNoCopy(fnRawBytes, "strict").Exists() {
 							fnRawBytes, _ = sjson.DeleteBytes(fnRawBytes, "strict")
 						}
 					}
@@ -492,7 +492,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 			out, _ = sjson.SetBytes(out, "toolConfig.functionCallingConfig.mode", "ANY")
 			allowedList := make([]string, 0, len(functionDeclarations))
 			for _, fnRaw := range functionDeclarations {
-				allowedList = append(allowedList, gjson.GetBytes(fnRaw, "name").String())
+				allowedList = append(allowedList, util.GetGJSONBytesNoCopy(fnRaw, "name").String())
 			}
 			out, _ = sjson.SetBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames", allowedList)
 		} else if hasStrictTool {
@@ -501,7 +501,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 			// Mode AUTO: functionDeclarations contains only allowed tools, mode is AUTO without allowedFunctionNames.
 			out, _ = sjson.SetBytes(out, "toolConfig.functionCallingConfig.mode", "AUTO")
 		}
-	} else if toolChoice := gjson.GetBytes(rawJSON, "tool_choice"); toolChoice.Exists() && toolChoice.Type != gjson.Null {
+	} else if toolChoice := util.GetGJSONBytesNoCopy(rawJSON, "tool_choice"); toolChoice.Exists() && toolChoice.Type != gjson.Null {
 		toolChoiceType := ""
 		if toolChoice.Type == gjson.String {
 			toolChoiceType = strings.ToLower(strings.TrimSpace(toolChoice.String()))
@@ -545,7 +545,7 @@ func convertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 	// Gemini function calling has no parameter to disable parallel tool calls while keeping tools enabled.
 	// As a safe fail-closed measure when explicit restrictions cannot be faithfully expressed,
 	// when parallel_tool_calls is explicitly false, mode is set to NONE.
-	if parallelToolCalls := gjson.GetBytes(rawJSON, "parallel_tool_calls"); parallelToolCalls.Type == gjson.False {
+	if parallelToolCalls := util.GetGJSONBytesNoCopy(rawJSON, "parallel_tool_calls"); parallelToolCalls.Type == gjson.False {
 		out, _ = sjson.SetBytes(out, "toolConfig.functionCallingConfig.mode", "NONE")
 		out, _ = sjson.DeleteBytes(out, "toolConfig.functionCallingConfig.allowedFunctionNames")
 	}

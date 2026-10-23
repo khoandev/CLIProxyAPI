@@ -15,7 +15,6 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	log "github.com/sirupsen/logrus"
-	"github.com/tidwall/gjson"
 )
 
 // CountTokens counts tokens for the given request using the Antigravity API.
@@ -145,7 +144,7 @@ func (e *AntigravityExecutor) CountTokens(ctx context.Context, auth *cliproxyaut
 	helps.AppendAPIResponseChunk(ctx, e.cfg, bodyBytes)
 
 	if httpResp.StatusCode >= http.StatusOK && httpResp.StatusCode < http.StatusMultipleChoices {
-		count := gjson.GetBytes(bodyBytes, "totalTokens").Int()
+		count := util.GetGJSONBytesNoCopy(bodyBytes, "totalTokens").Int()
 		translated := sdktranslator.TranslateTokenCount(respCtx, to, responseFormat, count, bodyBytes)
 		return cliproxyexecutor.Response{Payload: translated, Headers: httpResp.Header.Clone()}, nil
 	}

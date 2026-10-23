@@ -49,7 +49,7 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 	out, _ = sjson.SetBytes(out, "model", modelName)
 
 	// system instruction
-	if systemResult := gjson.GetBytes(rawJSON, "system"); systemResult.IsArray() {
+	if systemResult := util.GetGJSONBytesNoCopy(rawJSON, "system"); systemResult.IsArray() {
 		systemParts := make([][]byte, 0, 2)
 		systemResult.ForEach(func(_, systemPromptResult gjson.Result) bool {
 			if systemPromptResult.Get("type").String() == "text" {
@@ -79,7 +79,7 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 	}
 
 	// contents
-	if messagesResult := gjson.GetBytes(rawJSON, "messages"); messagesResult.IsArray() {
+	if messagesResult := util.GetGJSONBytesNoCopy(rawJSON, "messages"); messagesResult.IsArray() {
 		contentItems := translatorcommon.NewRawArrayItems(messagesResult.Get("#").Int())
 		toolNameByID := make(map[string]string)
 		var pendingToolUseIDs []string
@@ -223,7 +223,7 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 
 		// Strip a trailing model turn with unanswered function calls.
 		if len(contentItems) > 0 {
-			last := gjson.ParseBytes(contentItems[len(contentItems)-1])
+			last := util.ParseGJSONBytesNoCopy(contentItems[len(contentItems)-1])
 			if last.Get("role").String() == "model" {
 				hasFunctionCall := false
 				last.Get("parts").ForEach(func(_, part gjson.Result) bool {
@@ -244,7 +244,7 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 	// tools
 	var toolItems [][]byte
 	hasStrictTool := false
-	if toolsResult := gjson.GetBytes(rawJSON, "tools"); toolsResult.IsArray() {
+	if toolsResult := util.GetGJSONBytesNoCopy(rawJSON, "tools"); toolsResult.IsArray() {
 		toolsResult.ForEach(func(_, toolResult gjson.Result) bool {
 			if toolResult.Get("strict").Type == gjson.True {
 				hasStrictTool = true
@@ -273,7 +273,7 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 				if nameResult.Type != gjson.String || sanitizedName != originalName {
 					tool, _ = sjson.SetBytes(tool, "name", sanitizedName)
 				}
-				if gjson.ValidBytes(tool) && gjson.ParseBytes(tool).IsObject() {
+				if gjson.ValidBytes(tool) && util.ParseGJSONBytesNoCopy(tool).IsObject() {
 					toolItems = append(toolItems, tool)
 				}
 			}
@@ -287,7 +287,7 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 	}
 
 	// tool_choice
-	toolChoiceResult := gjson.GetBytes(rawJSON, "tool_choice")
+	toolChoiceResult := util.GetGJSONBytesNoCopy(rawJSON, "tool_choice")
 	if toolChoiceResult.Exists() && toolChoiceResult.Type != gjson.Null {
 		toolChoiceType := ""
 		toolChoiceName := ""
@@ -321,7 +321,7 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 
 	// Map Anthropic thinking -> Gemini thinking config when enabled
 	// Translator only does format conversion, ApplyThinking handles model capability validation.
-	if t := gjson.GetBytes(rawJSON, "thinking"); t.Exists() && t.IsObject() {
+	if t := util.GetGJSONBytesNoCopy(rawJSON, "thinking"); t.Exists() && t.IsObject() {
 		switch t.Get("type").String() {
 		case "enabled":
 			if b := t.Get("budget_tokens"); b.Exists() && b.Type == gjson.Number {
@@ -334,7 +334,7 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 			// - Otherwise, treat it as "enabled with target-model maximum" and emit thinkingBudget=max.
 			// ApplyThinking handles clamping to target model's supported levels.
 			effort := ""
-			if v := gjson.GetBytes(rawJSON, "output_config.effort"); v.Exists() && v.Type == gjson.String {
+			if v := util.GetGJSONBytesNoCopy(rawJSON, "output_config.effort"); v.Exists() && v.Type == gjson.String {
 				effort = strings.ToLower(strings.TrimSpace(v.String()))
 			}
 			if effort != "" {
@@ -352,13 +352,13 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 			}
 		}
 	}
-	if v := gjson.GetBytes(rawJSON, "temperature"); v.Exists() && v.Type == gjson.Number {
+	if v := util.GetGJSONBytesNoCopy(rawJSON, "temperature"); v.Exists() && v.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "generationConfig.temperature", v.Num)
 	}
-	if v := gjson.GetBytes(rawJSON, "top_p"); v.Exists() && v.Type == gjson.Number {
+	if v := util.GetGJSONBytesNoCopy(rawJSON, "top_p"); v.Exists() && v.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "generationConfig.topP", v.Num)
 	}
-	if v := gjson.GetBytes(rawJSON, "top_k"); v.Exists() && v.Type == gjson.Number {
+	if v := util.GetGJSONBytesNoCopy(rawJSON, "top_k"); v.Exists() && v.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "generationConfig.topK", v.Num)
 	}
 

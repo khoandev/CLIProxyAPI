@@ -39,6 +39,8 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	rawJSON := inputRawJSON
 	var drops translatorcommon.UserTurnDrops
 	functionNameMap := util.SanitizedFunctionNameMap(rawJSON)
+	// rawJSON is the immutable request payload for this call, so root may alias it.
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 	// Base envelope (no default thinkingConfig)
 	out := []byte(`{"project":"","request":{"contents":[]},"model":"gemini-2.5-pro"}`)
 
@@ -46,15 +48,15 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	out, _ = sjson.SetBytes(out, "model", modelName)
 
 	// Let user-provided generationConfig pass through
-	if genConfig := gjson.GetBytes(rawJSON, "generationConfig"); genConfig.Exists() {
+	if genConfig := root.Get("generationConfig"); genConfig.Exists() {
 		out, _ = sjson.SetRawBytes(out, "request.generationConfig", []byte(genConfig.Raw))
-	} else if genConfig := gjson.GetBytes(rawJSON, "generation_config"); genConfig.Exists() {
+	} else if genConfig := root.Get("generation_config"); genConfig.Exists() {
 		out, _ = sjson.SetRawBytes(out, "request.generationConfig", []byte(genConfig.Raw))
 	}
 
 	// Apply thinking configuration: convert OpenAI reasoning_effort to Antigravity thinkingConfig.
 	// Inline translation-only mapping; capability checks happen later in ApplyThinking.
-	re := gjson.GetBytes(rawJSON, "reasoning_effort")
+	re := root.Get("reasoning_effort")
 	if re.Exists() {
 		effort := strings.ToLower(strings.TrimSpace(re.String()))
 		if effort != "" {
@@ -69,23 +71,23 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	out = applyOpenAIThinkingCompatibilityToAntigravity(out, rawJSON)
 
 	// Temperature/top_p/top_k/max_tokens/max_completion_tokens
-	if tr := gjson.GetBytes(rawJSON, "temperature"); tr.Exists() && tr.Type == gjson.Number {
+	if tr := root.Get("temperature"); tr.Exists() && tr.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "request.generationConfig.temperature", tr.Num)
 	}
-	if tpr := gjson.GetBytes(rawJSON, "top_p"); tpr.Exists() && tpr.Type == gjson.Number {
+	if tpr := root.Get("top_p"); tpr.Exists() && tpr.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "request.generationConfig.topP", tpr.Num)
 	}
-	if tkr := gjson.GetBytes(rawJSON, "top_k"); tkr.Exists() && tkr.Type == gjson.Number {
+	if tkr := root.Get("top_k"); tkr.Exists() && tkr.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "request.generationConfig.topK", tkr.Num)
 	}
-	if maxTok := gjson.GetBytes(rawJSON, "max_tokens"); maxTok.Exists() && maxTok.Type == gjson.Number {
+	if maxTok := root.Get("max_tokens"); maxTok.Exists() && maxTok.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "request.generationConfig.maxOutputTokens", maxTok.Num)
-	} else if mct := gjson.GetBytes(rawJSON, "max_completion_tokens"); mct.Exists() && mct.Type == gjson.Number {
+	} else if mct := root.Get("max_completion_tokens"); mct.Exists() && mct.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "request.generationConfig.maxOutputTokens", mct.Num)
 	}
 
 	// Map OpenAI response_format to Antigravity structured output settings.
-	if responseFormat := gjson.GetBytes(rawJSON, "response_format"); responseFormat.Exists() {
+	if responseFormat := root.Get("response_format"); responseFormat.Exists() {
 		switch responseFormatType := strings.ToLower(strings.TrimSpace(responseFormat.Get("type").String())); responseFormatType {
 		case "json_object", "json_schema":
 			for _, schemaKey := range []string{"responseSchema", "responseJsonSchema", "response_schema", "response_json_schema"} {
@@ -101,7 +103,7 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	}
 
 	// Candidate count (OpenAI 'n' parameter)
-	if n := gjson.GetBytes(rawJSON, "n"); n.Exists() && n.Type == gjson.Number {
+	if n := root.Get("n"); n.Exists() && n.Type == gjson.Number {
 		if val := n.Int(); val > 1 {
 			out, _ = sjson.SetBytes(out, "request.generationConfig.candidateCount", val)
 		}
@@ -109,7 +111,7 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 
 	// Map OpenAI modalities -> Antigravity request.generationConfig.responseModalities
 	// e.g. "modalities": ["image", "text"] -> ["IMAGE", "TEXT"]
-	if mods := gjson.GetBytes(rawJSON, "modalities"); mods.Exists() && mods.IsArray() {
+	if mods := root.Get("modalities"); mods.Exists() && mods.IsArray() {
 		var responseMods []string
 		for _, m := range mods.Array() {
 			switch strings.ToLower(m.String()) {
@@ -126,7 +128,7 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 
 	// OpenRouter-style image_config support
 	// If the input uses top-level image_config.aspect_ratio, map it into request.generationConfig.imageConfig.aspectRatio.
-	if imgCfg := gjson.GetBytes(rawJSON, "image_config"); imgCfg.Exists() && imgCfg.IsObject() {
+	if imgCfg := root.Get("image_config"); imgCfg.Exists() && imgCfg.IsObject() {
 		if ar := imgCfg.Get("aspect_ratio"); ar.Exists() && ar.Type == gjson.String {
 			out, _ = sjson.SetBytes(out, "request.generationConfig.imageConfig.aspectRatio", ar.Str)
 		}
@@ -136,7 +138,7 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	}
 
 	// messages -> systemInstruction + contents
-	messages := gjson.GetBytes(rawJSON, "messages")
+	messages := root.Get("messages")
 	if messages.IsArray() {
 		arr := messages.Array()
 		systemParts := make([][]byte, 0, 2)
@@ -336,7 +338,7 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	}
 
 	// tools -> request.tools[].functionDeclarations + request.tools[].googleSearch/codeExecution/urlContext passthrough
-	tools := gjson.GetBytes(rawJSON, "tools")
+	tools := root.Get("tools")
 	toolResults := tools.Array()
 	if tools.IsArray() && len(toolResults) > 0 {
 		functionDeclarations := make([][]byte, 0, len(toolResults))
@@ -390,7 +392,7 @@ func convertOpenAIRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 					if nameResult.Type != gjson.String || mappedName != originalName {
 						fnRawBytes, _ = sjson.SetBytes(fnRawBytes, "name", mappedName)
 					}
-					if gjson.GetBytes(fnRawBytes, "strict").Exists() {
+					if util.GetGJSONBytesNoCopy(fnRawBytes, "strict").Exists() {
 						fnRawBytes, _ = sjson.DeleteBytes(fnRawBytes, "strict")
 					}
 					functionDeclarations = append(functionDeclarations, fnRawBytes)
@@ -499,7 +501,7 @@ func antigravityOpenAIAudioMIMEType(format string) string {
 }
 
 func applyOpenAIToolChoiceToAntigravity(out, rawJSON []byte, functionNameMap map[string]string) []byte {
-	toolChoice := gjson.GetBytes(rawJSON, "tool_choice")
+	toolChoice := util.GetGJSONBytesNoCopy(rawJSON, "tool_choice")
 	if !toolChoice.Exists() {
 		return out
 	}
@@ -547,30 +549,30 @@ func normalizeAntigravityOpenAIThinkingConfig(out []byte) []byte {
 		"request.generationConfig.thinking_config",
 		"request.generationConfig.thinkingConfig",
 	} {
-		if sourcePath := prefix + ".includeThoughts"; gjson.GetBytes(out, sourcePath).Exists() {
-			includeThoughts := gjson.GetBytes(out, sourcePath)
+		if sourcePath := prefix + ".includeThoughts"; util.GetGJSONBytesNoCopy(out, sourcePath).Exists() {
+			includeThoughts := util.GetGJSONBytesNoCopy(out, sourcePath)
 			out = setAntigravityOpenAIBoolResultIfValid(out, "request.generationConfig.thinkingConfig.includeThoughts", includeThoughts)
 			if includeThoughts.Type != gjson.True && includeThoughts.Type != gjson.False {
 				out, _ = sjson.DeleteBytes(out, sourcePath)
 			}
 		}
-		if sourcePath := prefix + ".include_thoughts"; gjson.GetBytes(out, sourcePath).Exists() {
-			includeThoughts := gjson.GetBytes(out, sourcePath)
+		if sourcePath := prefix + ".include_thoughts"; util.GetGJSONBytesNoCopy(out, sourcePath).Exists() {
+			includeThoughts := util.GetGJSONBytesNoCopy(out, sourcePath)
 			out = setAntigravityOpenAIBoolResultIfValid(out, "request.generationConfig.thinkingConfig.includeThoughts", includeThoughts)
 			if includeThoughts.Type != gjson.True && includeThoughts.Type != gjson.False {
 				out, _ = sjson.DeleteBytes(out, sourcePath)
 			}
 		}
-		if thinkingLevel := gjson.GetBytes(out, prefix+".thinkingLevel"); thinkingLevel.Exists() {
+		if thinkingLevel := util.GetGJSONBytesNoCopy(out, prefix+".thinkingLevel"); thinkingLevel.Exists() {
 			out = setAntigravityOpenAIRawIfDifferent(out, "request.generationConfig.thinkingConfig.thinkingLevel", thinkingLevel)
 		}
-		if thinkingLevel := gjson.GetBytes(out, prefix+".thinking_level"); thinkingLevel.Exists() {
+		if thinkingLevel := util.GetGJSONBytesNoCopy(out, prefix+".thinking_level"); thinkingLevel.Exists() {
 			out = setAntigravityOpenAIRawIfDifferent(out, "request.generationConfig.thinkingConfig.thinkingLevel", thinkingLevel)
 		}
-		if thinkingBudget := gjson.GetBytes(out, prefix+".thinkingBudget"); thinkingBudget.Exists() {
+		if thinkingBudget := util.GetGJSONBytesNoCopy(out, prefix+".thinkingBudget"); thinkingBudget.Exists() {
 			out = setAntigravityOpenAIRawIfDifferent(out, "request.generationConfig.thinkingConfig.thinkingBudget", thinkingBudget)
 		}
-		if thinkingBudget := gjson.GetBytes(out, prefix+".thinking_budget"); thinkingBudget.Exists() {
+		if thinkingBudget := util.GetGJSONBytesNoCopy(out, prefix+".thinking_budget"); thinkingBudget.Exists() {
 			out = setAntigravityOpenAIRawIfDifferent(out, "request.generationConfig.thinkingConfig.thinkingBudget", thinkingBudget)
 		}
 	}
@@ -579,7 +581,7 @@ func normalizeAntigravityOpenAIThinkingConfig(out []byte) []byte {
 		"request.generationConfig.includeThoughts",
 		"request.generationConfig.include_thoughts",
 	} {
-		if includeThoughts := gjson.GetBytes(out, path); includeThoughts.Exists() {
+		if includeThoughts := util.GetGJSONBytesNoCopy(out, path); includeThoughts.Exists() {
 			out = setAntigravityOpenAIBoolResultIfValid(out, "request.generationConfig.thinkingConfig.includeThoughts", includeThoughts)
 		}
 	}
@@ -592,7 +594,7 @@ func normalizeAntigravityOpenAIThinkingConfig(out []byte) []byte {
 		"request.generationConfig.includeThoughts",
 		"request.generationConfig.include_thoughts",
 	} {
-		if gjson.GetBytes(out, path).Exists() {
+		if util.GetGJSONBytesNoCopy(out, path).Exists() {
 			out, _ = sjson.DeleteBytes(out, path)
 		}
 	}
@@ -612,7 +614,7 @@ func setAntigravityOpenAIBoolResultIfValid(out []byte, path string, value gjson.
 }
 
 func setAntigravityOpenAIBoolIfDifferent(out []byte, path string, value bool) []byte {
-	current := gjson.GetBytes(out, path)
+	current := util.GetGJSONBytesNoCopy(out, path)
 	if value && current.Type == gjson.True || !value && current.Type == gjson.False {
 		return out
 	}
@@ -624,7 +626,7 @@ func setAntigravityOpenAIBoolIfDifferent(out []byte, path string, value bool) []
 }
 
 func setAntigravityOpenAIRawIfDifferent(out []byte, path string, value gjson.Result) []byte {
-	current := gjson.GetBytes(out, path)
+	current := util.GetGJSONBytesNoCopy(out, path)
 	if current.Exists() && current.Raw == value.Raw {
 		return out
 	}

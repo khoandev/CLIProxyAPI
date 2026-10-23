@@ -22,6 +22,12 @@ type SDKConfig struct {
 	// Values <= 0 disable the limit (default).
 	MaxRequestBodyBytes int64 `yaml:"max-request-body-bytes" json:"max-request-body-bytes"`
 
+	// MaxInFlightRequests caps concurrent in-flight proxied requests.
+	// 0 (default) derives the cap from the container/GOMEMLIMIT soft memory limit
+	// at 8 MiB per in-flight request; -1 (or any negative) disables the cap;
+	// positive values set the exact cap.
+	MaxInFlightRequests int `yaml:"max-in-flight-requests" json:"max-in-flight-requests"`
+
 	// Client configures client-facing compatibility behavior.
 	Client ClientConfig `yaml:"client" json:"client"`
 

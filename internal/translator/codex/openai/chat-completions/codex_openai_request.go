@@ -14,6 +14,7 @@ import (
 
 	applypatch "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/apply-patch"
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -40,7 +41,7 @@ func ConvertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 func convertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream bool) ([]byte, error) {
 	rawJSON := inputRawJSON
 	var drops translatorcommon.UserTurnDrops
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 	tools := root.Get("tools")
 	toolResults := tools.Array()
 	// Start with empty JSON object
@@ -69,7 +70,7 @@ func convertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	// }
 
 	// Map reasoning effort
-	if v := gjson.GetBytes(rawJSON, "reasoning_effort"); v.Exists() {
+	if v := util.GetGJSONBytesNoCopy(rawJSON, "reasoning_effort"); v.Exists() {
 		out, _ = sjson.SetBytes(out, "reasoning.effort", v.Value())
 	} else {
 		out, _ = sjson.SetBytes(out, "reasoning.effort", "medium")
@@ -77,7 +78,7 @@ func convertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	if serviceTier := normalizeCodexServiceTier(root.Get("service_tier")); serviceTier != "" {
 		out, _ = sjson.SetBytes(out, "service_tier", serviceTier)
 	}
-	out, _ = sjson.SetBytes(out, "parallel_tool_calls", gjson.GetBytes(rawJSON, "parallel_tool_calls").Type != gjson.False)
+	out, _ = sjson.SetBytes(out, "parallel_tool_calls", util.GetGJSONBytesNoCopy(rawJSON, "parallel_tool_calls").Type != gjson.False)
 	// OpenAI documents reasoning summaries as explicit opt-in output. Leave
 	// reasoning.summary to the source request's canonical summary intent instead
 	// of coupling it to reasoning effort.
@@ -136,7 +137,7 @@ func convertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	}
 
 	// Extract system instructions from first system message (string or text object)
-	messages := gjson.GetBytes(rawJSON, "messages")
+	messages := util.GetGJSONBytesNoCopy(rawJSON, "messages")
 	type pendingToolCall struct {
 		callID       string
 		sourceCallID string
@@ -404,11 +405,11 @@ func convertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	out = translatorcommon.SetRawArrayItems(out, "input", inputItems)
 
 	// Map response_format and text settings to Responses API text.format
-	rf := gjson.GetBytes(rawJSON, "response_format")
-	text := gjson.GetBytes(rawJSON, "text")
+	rf := util.GetGJSONBytesNoCopy(rawJSON, "response_format")
+	text := util.GetGJSONBytesNoCopy(rawJSON, "text")
 	if rf.Exists() {
 		// Always create text object when response_format provided
-		if !gjson.GetBytes(out, "text").Exists() {
+		if !util.GetGJSONBytesNoCopy(out, "text").Exists() {
 			out, _ = sjson.SetRawBytes(out, "text", []byte(`{}`))
 		}
 
@@ -441,7 +442,7 @@ func convertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	} else if text.Exists() {
 		// If only text.verbosity present (no response_format), map verbosity
 		if v := text.Get("verbosity"); v.Exists() {
-			if !gjson.GetBytes(out, "text").Exists() {
+			if !util.GetGJSONBytesNoCopy(out, "text").Exists() {
 				out, _ = sjson.SetRawBytes(out, "text", []byte(`{}`))
 			}
 			out, _ = sjson.SetBytes(out, "text.verbosity", v.Value())
@@ -512,7 +513,7 @@ func convertOpenAIRequestToCodex(modelName string, inputRawJSON []byte, stream b
 	// Map tool_choice when present.
 	// Chat Completions: "tool_choice" can be a string ("auto"/"none") or an object (e.g. {"type":"function","function":{"name":"..."}}).
 	// Responses API: keep built-in tool choices as-is and flatten named choices to {"type":"...","name":"..."}.
-	if tc := gjson.GetBytes(rawJSON, "tool_choice"); tc.Exists() {
+	if tc := util.GetGJSONBytesNoCopy(rawJSON, "tool_choice"); tc.Exists() {
 		switch {
 		case tc.Type == gjson.String:
 			out, _ = sjson.SetBytes(out, "tool_choice", tc.String())
@@ -730,7 +731,7 @@ func collectRequestToolNames(rawJSON []byte) []string {
 	}
 
 	// 1. tools declarations
-	tools := gjson.GetBytes(rawJSON, "tools")
+	tools := util.GetGJSONBytesNoCopy(rawJSON, "tools")
 	if tools.IsArray() {
 		for _, tool := range tools.Array() {
 			switch tool.Get("type").String() {
@@ -743,7 +744,7 @@ func collectRequestToolNames(rawJSON []byte) []string {
 	}
 
 	// 2. tool_choice
-	tc := gjson.GetBytes(rawJSON, "tool_choice")
+	tc := util.GetGJSONBytesNoCopy(rawJSON, "tool_choice")
 	if tc.IsObject() {
 		switch tc.Get("type").String() {
 		case "function":
@@ -758,7 +759,7 @@ func collectRequestToolNames(rawJSON []byte) []string {
 	}
 
 	// 3. assistant tool_calls in messages
-	messages := gjson.GetBytes(rawJSON, "messages")
+	messages := util.GetGJSONBytesNoCopy(rawJSON, "messages")
 	if messages.IsArray() {
 		for _, msg := range messages.Array() {
 			if msg.Get("role").String() == "assistant" {

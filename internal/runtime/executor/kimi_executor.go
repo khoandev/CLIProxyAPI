@@ -371,7 +371,9 @@ func (e *KimiExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Aut
 			}
 		}()
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, 1_048_576) // 1MB
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, 1_048_576) // 1MB
+		defer helps.ReleaseScanBuffer(scanBuf)
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var streamUsage helps.StreamUsageBuffer
 		defer streamUsage.Publish(ctx, reporter)
@@ -675,7 +677,9 @@ func (e *KimiExecutor) executeResponsesStream(ctx context.Context, auth *cliprox
 		}()
 
 		scanner := bufio.NewScanner(httpResp.Body)
-		scanner.Buffer(nil, 52_428_800)
+		scanBuf := helps.AcquireScanBuffer()
+		scanner.Buffer(scanBuf, 52_428_800)
+		defer helps.ReleaseScanBuffer(scanBuf)
 		originalRequest := req.Payload
 		if len(opts.OriginalRequest) > 0 {
 			originalRequest = opts.OriginalRequest

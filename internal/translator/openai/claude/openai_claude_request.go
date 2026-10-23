@@ -37,7 +37,7 @@ func convertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 	// Base OpenAI Chat Completions API template
 	out := []byte(`{"model":"","messages":[]}`)
 
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 
 	// Model mapping
 	out, _ = sjson.SetBytes(out, "model", modelName)
@@ -239,7 +239,7 @@ func convertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 								toolCallJSON, _ = sjson.SetBytes(toolCallJSON, "function.arguments", "{}")
 							}
 
-							toolCalls = append(toolCalls, gjson.ParseBytes(toolCallJSON).Value())
+							toolCalls = append(toolCalls, util.ParseGJSONBytesNoCopy(toolCallJSON).Value())
 						}
 
 					case "tool_result":

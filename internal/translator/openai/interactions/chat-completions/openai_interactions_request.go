@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -16,7 +17,7 @@ func ConvertOpenAIRequestToInteractions(modelName string, inputRawJSON []byte, s
 // convertOpenAIRequestToInteractions also reports a file or audio part that
 // Interactions cannot receive when it leaves a user turn with nothing to send.
 func convertOpenAIRequestToInteractions(modelName string, inputRawJSON []byte, stream bool) ([]byte, error) {
-	root := gjson.ParseBytes(inputRawJSON)
+	root := util.ParseGJSONBytesNoCopy(inputRawJSON)
 	out := []byte(`{"model":"","input":[]}`)
 	model := firstNonEmpty(modelName, root.Get("model").String())
 	out, _ = sjson.SetBytes(out, "model", model)
@@ -141,7 +142,7 @@ func openAIChatContentStep(stepType string, content gjson.Result, drops *transla
 				return
 			}
 			contentItems = append(contentItems, converted)
-			if convertedType := gjson.GetBytes(converted, "type").String(); convertedType != "text" || gjson.GetBytes(converted, "text").String() != "" {
+			if convertedType := util.GetGJSONBytesNoCopy(converted, "type").String(); convertedType != "text" || util.GetGJSONBytesNoCopy(converted, "text").String() != "" {
 				sendable++
 			}
 		}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -19,7 +20,7 @@ func ConvertInteractionsRequestToCodex(modelName string, inputRawJSON []byte, st
 // convertInteractionsRequestToCodex also reports a user turn that was left empty
 // because its only attachment has no Codex equivalent.
 func convertInteractionsRequestToCodex(modelName string, inputRawJSON []byte, stream bool) ([]byte, error) {
-	root := gjson.ParseBytes(inputRawJSON)
+	root := util.ParseGJSONBytesNoCopy(inputRawJSON)
 	out := []byte(`{"model":"","instructions":"","store":false,"input":[]}`)
 	out, _ = sjson.SetBytes(out, "model", modelName)
 	if stream || root.Get("stream").Bool() {
@@ -325,7 +326,7 @@ func appendInteractionsContentPartToCodex(items *[][]byte, part gjson.Result, ro
 // interactionsCodexIsBlankText reports whether a Codex message part is a text part
 // holding only whitespace.
 func interactionsCodexIsBlankText(item []byte) bool {
-	parsed := gjson.ParseBytes(item)
+	parsed := util.ParseGJSONBytesNoCopy(item)
 	partType := parsed.Get("type").String()
 	return (partType == "input_text" || partType == "output_text") && strings.TrimSpace(parsed.Get("text").String()) == ""
 }
@@ -393,7 +394,7 @@ func copyInteractionsToolsToCodex(out []byte, root gjson.Result) []byte {
 		return out
 	}
 	out, _ = sjson.SetRawBytes(out, "tools", raw)
-	if !gjson.GetBytes(out, "tool_choice").Exists() {
+	if !util.GetGJSONBytesNoCopy(out, "tool_choice").Exists() {
 		out, _ = sjson.SetBytes(out, "tool_choice", "auto")
 	}
 	return out
@@ -401,7 +402,7 @@ func copyInteractionsToolsToCodex(out []byte, root gjson.Result) []byte {
 
 func copyInteractionsCodexTopLevel(out []byte, root gjson.Result) []byte {
 	if serviceTier := normalizeInteractionsCodexServiceTier(root.Get("service_tier")); serviceTier != "" {
-		current := gjson.GetBytes(out, "service_tier")
+		current := util.GetGJSONBytesNoCopy(out, "service_tier")
 		if current.Type != gjson.String || current.String() != serviceTier {
 			out, _ = sjson.SetBytes(out, "service_tier", serviceTier)
 		}
@@ -418,7 +419,7 @@ func copyInteractionsCodexTopLevel(out []byte, root gjson.Result) []byte {
 }
 
 func setInteractionsCodexRawIfDifferent(out []byte, path string, value gjson.Result) []byte {
-	current := gjson.GetBytes(out, path)
+	current := util.GetGJSONBytesNoCopy(out, path)
 	if current.Exists() && current.Raw == value.Raw {
 		return out
 	}
@@ -434,7 +435,7 @@ func setInteractionsCodexRawIfDifferent(out []byte, path string, value gjson.Res
 // back for replay.
 func ensureInteractionsCodexEncryptedContentInclude(out []byte) []byte {
 	const reasoningEncryptedContent = "reasoning.encrypted_content"
-	include := gjson.GetBytes(out, "include")
+	include := util.GetGJSONBytesNoCopy(out, "include")
 	if !include.Exists() {
 		out, _ = sjson.SetRawBytes(out, "include", []byte(`["reasoning.encrypted_content"]`))
 		return out

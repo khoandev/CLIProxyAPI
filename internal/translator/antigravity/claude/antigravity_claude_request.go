@@ -99,7 +99,7 @@ func RequireCachedThinkingSignatures(ctx context.Context, modelName string, rawJ
 	if sigcompat.SignatureProviderFromModelName(modelName) == sigcompat.SignatureProviderGemini {
 		return nil
 	}
-	messagesResult := gjson.GetBytes(rawJSON, "messages")
+	messagesResult := util.GetGJSONBytesNoCopy(rawJSON, "messages")
 	if !messagesResult.IsArray() {
 		return nil
 	}
@@ -321,9 +321,12 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	var drops translatorcommon.UserTurnDrops
 	functionNameMap := util.SanitizedFunctionNameMap(rawJSON)
 
+	// rawJSON is the immutable request payload for this call, so root may alias it.
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
+
 	// system instruction
 	systemParts := make([][]byte, 0, 2)
-	systemResult := gjson.GetBytes(rawJSON, "system")
+	systemResult := root.Get("system")
 	if systemResult.IsArray() {
 		systemResults := systemResult.Array()
 		for i := 0; i < len(systemResults); i++ {
@@ -348,14 +351,14 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	}
 
 	// contents
-	contentItems := translatorcommon.NewRawArrayItems(gjson.GetBytes(rawJSON, "messages.#").Int())
+	contentItems := translatorcommon.NewRawArrayItems(root.Get("messages.#").Int())
 
 	// tool_use_id → tool_name lookup, populated incrementally during the main loop.
 	// Claude's tool_result references tool_use by ID; Gemini requires functionResponse.name.
 	toolNameByID := make(map[string]string)
 	var pendingToolUseIDs []string
 
-	messagesResult := gjson.GetBytes(rawJSON, "messages")
+	messagesResult := root.Get("messages")
 	if messagesResult.IsArray() {
 		messageResults := messagesResult.Array()
 		numMessages := len(messageResults)
@@ -524,7 +527,9 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 						attached := false
 						foundSemanticPart := false
 						for partIndex := len(partItems) - 1; partIndex >= 0; partIndex-- {
-							part := gjson.ParseBytes(partItems[partIndex])
+							// partItems[partIndex] is only replaced after the last read
+							// of part, and the replacement allocates a fresh buffer.
+							part := util.ParseGJSONBytesNoCopy(partItems[partIndex])
 							partTargetKind := ""
 							switch {
 							case part.Get("functionCall").Exists():
@@ -775,7 +780,7 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 					previousCategory := -1
 					seenFunctionCall := false
 					for _, partJSON := range partItems {
-						part := gjson.ParseBytes(partJSON)
+						part := util.ParseGJSONBytesNoCopy(partJSON)
 						category := 1
 						isSignatureCarrier := part.Get("text").Exists() && part.Get("text").String() == "" && strings.TrimSpace(part.Get("thoughtSignature").String()) != ""
 						isFunctionTailCarrier := isSignatureCarrier && seenFunctionCall
@@ -815,7 +820,7 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	var toolsJSON []byte
 	toolDeclCount := 0
 	allowedToolKeys := []string{"name", "description", "behavior", "parameters", "parametersJsonSchema", "response", "responseJsonSchema"}
-	toolsResult := gjson.GetBytes(rawJSON, "tools")
+	toolsResult := root.Get("tools")
 	if toolsResult.IsArray() {
 		var functionDeclarations [][]byte
 		toolsResults := toolsResult.Array()
@@ -830,13 +835,15 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 				inputSchema := util.CleanJSONSchemaForAntigravity(inputSchemaResult.Raw)
 				tool, _ := sjson.DeleteBytes([]byte(toolResult.Raw), "input_schema")
 				tool, _ = sjson.SetRawBytes(tool, "parametersJsonSchema", []byte(inputSchema))
-				nameResult := gjson.GetBytes(tool, "name")
+				nameResult := util.GetGJSONBytesNoCopy(tool, "name")
 				originalName := nameResult.String()
 				mappedName := util.MapSanitizedFunctionName(functionNameMap, originalName)
 				if nameResult.Type != gjson.String || mappedName != originalName {
 					tool, _ = sjson.SetBytes(tool, "name", mappedName)
 				}
-				for toolKey := range gjson.ParseBytes(tool).Map() {
+				// Every sjson write below allocates, so the keys parsed here keep
+				// aliasing a buffer that is never rewritten in place.
+				for toolKey := range util.ParseGJSONBytesNoCopy(tool).Map() {
 					if util.InArray(allowedToolKeys, toolKey) {
 						continue
 					}
@@ -847,7 +854,7 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 		}
 		if len(functionDeclarations) > 0 {
 			deduplicated := util.DeduplicateFunctionDeclarations(translatorcommon.JoinRawArray(functionDeclarations))
-			toolDeclCount = len(gjson.ParseBytes(deduplicated).Array())
+			toolDeclCount = len(util.ParseGJSONBytesNoCopy(deduplicated).Array())
 			if toolDeclCount > 0 {
 				functionToolNode := []byte(`{"functionDeclarations":[]}`)
 				functionToolNode, _ = sjson.SetRawBytes(functionToolNode, "functionDeclarations", deduplicated)
@@ -861,7 +868,7 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	out, _ = sjson.SetBytes(out, "model", modelName)
 
 	// tool_choice metadata
-	toolChoiceResult := gjson.GetBytes(rawJSON, "tool_choice")
+	toolChoiceResult := root.Get("tool_choice")
 	toolChoiceType := ""
 	toolChoiceName := ""
 	if toolChoiceResult.Exists() {
@@ -876,7 +883,7 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 
 	// Inject interleaved thinking hint when both tools and thinking are active
 	hasTools := toolDeclCount > 0 && !isToolChoiceNone
-	thinkingResult := gjson.GetBytes(rawJSON, "thinking")
+	thinkingResult := root.Get("thinking")
 	thinkingType := thinkingResult.Get("type").String()
 	hasThinking := thinkingResult.Exists() && thinkingResult.IsObject() && (thinkingType == "enabled" || thinkingType == "adaptive" || thinkingType == "auto")
 	isClaudeThinking := util.IsClaudeThinkingModel(modelName)
@@ -923,7 +930,7 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	}
 
 	// Map Anthropic thinking -> Gemini thinkingBudget/include_thoughts when type==enabled
-	if t := gjson.GetBytes(rawJSON, "thinking"); enableThoughtTranslate && t.Exists() && t.IsObject() {
+	if t := root.Get("thinking"); enableThoughtTranslate && t.Exists() && t.IsObject() {
 		switch t.Get("type").String() {
 		case "enabled":
 			if b := t.Get("budget_tokens"); b.Exists() && b.Type == gjson.Number {
@@ -936,7 +943,7 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 			// - Otherwise, treat it as "enabled with target-model maximum" and emit high.
 			// ApplyThinking handles clamping to target model's supported levels.
 			effort := ""
-			if v := gjson.GetBytes(rawJSON, "output_config.effort"); v.Exists() && v.Type == gjson.String {
+			if v := root.Get("output_config.effort"); v.Exists() && v.Type == gjson.String {
 				effort = strings.ToLower(strings.TrimSpace(v.String()))
 			}
 			if effort != "" {
@@ -946,16 +953,16 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 			}
 		}
 	}
-	if v := gjson.GetBytes(rawJSON, "temperature"); v.Exists() && v.Type == gjson.Number {
+	if v := root.Get("temperature"); v.Exists() && v.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "request.generationConfig.temperature", v.Num)
 	}
-	if v := gjson.GetBytes(rawJSON, "top_p"); v.Exists() && v.Type == gjson.Number {
+	if v := root.Get("top_p"); v.Exists() && v.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "request.generationConfig.topP", v.Num)
 	}
-	if v := gjson.GetBytes(rawJSON, "top_k"); v.Exists() && v.Type == gjson.Number {
+	if v := root.Get("top_k"); v.Exists() && v.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "request.generationConfig.topK", v.Num)
 	}
-	if v := gjson.GetBytes(rawJSON, "max_tokens"); v.Exists() && v.Type == gjson.Number {
+	if v := root.Get("max_tokens"); v.Exists() && v.Type == gjson.Number {
 		out, _ = sjson.SetBytes(out, "request.generationConfig.maxOutputTokens", v.Num)
 	}
 

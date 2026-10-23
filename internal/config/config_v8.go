@@ -70,7 +70,7 @@ var v8KeyFamilies = []configPath{
 
 func buildV8Paths() []configPath {
 	prefixes := []configPath{
-		{"host", "server.host"}, {"port", "server.port"}, {"max-request-body-bytes", "server.max-request-body-bytes"}, {"trusted-proxies", "server.trusted-proxies"},
+		{"host", "server.host"}, {"port", "server.port"}, {"max-request-body-bytes", "server.max-request-body-bytes"}, {"max-in-flight-requests", "server.max-in-flight-requests"}, {"trusted-proxies", "server.trusted-proxies"},
 		{"github-token", "server.github-token"},
 		{"tls", "server.tls"}, {"commercial-mode", "server.commercial-mode"}, {"discovery", "server.discovery"},
 		{"remote-management", "management"}, {"api-keys", "access.api-keys"},

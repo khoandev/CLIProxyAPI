@@ -14,9 +14,20 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	log "github.com/sirupsen/logrus"
 )
+
+// appliedLimit records the soft heap limit installed by the last apply call
+// so the admission controller can derive a concurrency cap from it.
+var appliedLimit atomic.Int64
+
+// Limit returns the soft heap limit in bytes installed by Apply.
+// It returns 0 when no limit is active (GOMEMLIMIT=off, or no container limit visible).
+func Limit() int64 {
+	return appliedLimit.Load()
+}
 
 const (
 	// cgroupV2MaxFile holds the memory ceiling of a cgroup v2 group.
@@ -76,10 +87,12 @@ func apply(env environment) (int64, bool) {
 
 	if raw := strings.TrimSpace(env.getenv("GOMEMLIMIT")); raw != "" {
 		if raw == "off" {
+			appliedLimit.Store(0)
 			return 0, false
 		}
 		if value, err := strconv.ParseInt(raw, 10, 64); err == nil && value > 0 {
 			// The Go runtime already applied the operator limit; do not override it.
+			appliedLimit.Store(value)
 			return 0, false
 		}
 		log.Warnf("ignoring invalid GOMEMLIMIT %q; deriving the soft memory limit from the container limit", raw)
@@ -87,14 +100,17 @@ func apply(env environment) (int64, bool) {
 
 	limit, ok := detectLimitFrom(env.readFile, cgroupRelativePath(env.readFile))
 	if !ok || limit <= 0 {
+		appliedLimit.Store(0)
 		return 0, false
 	}
 
 	// The division comes first so the multiplication cannot overflow.
 	soft := limit / limitDiv * limitRatio
 	if soft <= 0 {
+		appliedLimit.Store(0)
 		return 0, false
 	}
+	appliedLimit.Store(soft)
 	env.setMemoryLimit(soft)
 	log.Infof("soft memory limit set to %d (cgroup limit %d)", soft, limit)
 	return soft, true

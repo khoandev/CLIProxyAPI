@@ -9,6 +9,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/memlimit"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/safemode"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
@@ -82,8 +83,7 @@ func (s *Server) homeHeartbeatMiddleware() gin.HandlerFunc {
 			return
 		}
 		if c != nil && c.Request != nil {
-			path := c.Request.URL.Path
-			if strings.HasPrefix(path, "/v0/management/") || path == "/v0/management" || strings.HasPrefix(path, "/v8/management/") || path == "/v8/management" || strings.HasPrefix(path, "/v0/resource/plugins/") || path == "/management.html" {
+			if isManagementAssetPath(c.Request.URL.Path) {
 				c.Next()
 				return
 			}
@@ -93,6 +93,79 @@ func (s *Server) homeHeartbeatMiddleware() gin.HandlerFunc {
 			c.AbortWithStatus(http.StatusServiceUnavailable)
 			return
 		}
+		c.Next()
+	}
+}
+
+// isManagementAssetPath reports whether path belongs to the management UI or
+// management API surface. Those paths stay reachable when the proxy is
+// saturated or the Home heartbeat is down so operators can always reach the
+// control plane.
+func isManagementAssetPath(path string) bool {
+	switch {
+	case path == "/v0/management", path == "/v8/management",
+		path == "/v0/resource/plugins", path == exampleAPIKeyManagementPath:
+		return true
+	case strings.HasPrefix(path, "/v0/management/"), strings.HasPrefix(path, "/v8/management/"),
+		strings.HasPrefix(path, "/v0/resource/plugins/"):
+		return true
+	}
+	return false
+}
+
+// inFlightRequestsPerRequestBytes estimates the steady-state memory held by
+// one in-flight proxied request: body copy, translator buffers, stream
+// scanner, and accumulator state.
+const inFlightRequestsPerRequestBytes = 8 << 20
+
+// maxInFlightRequests resolves the effective in-flight cap from config and the
+// detected soft memory limit. It returns 0 when unlimited.
+func (s *Server) maxInFlightRequests() int64 {
+	if s == nil {
+		return 0
+	}
+	cfg := s.getConfig()
+	var configured int
+	if cfg != nil {
+		configured = cfg.MaxInFlightRequests
+	}
+	if configured < 0 {
+		return 0
+	}
+	if configured > 0 {
+		return int64(configured)
+	}
+	memLimit := memlimit.Limit()
+	if memLimit <= 0 {
+		return 0
+	}
+	derived := memLimit / inFlightRequestsPerRequestBytes
+	if derived < 8 {
+		derived = 8
+	}
+	return derived
+}
+
+// inFlightAdmissionMiddleware caps concurrent in-flight proxied requests so
+// memory stays bounded under load instead of tripping the kernel OOM killer.
+// Requests over the cap receive 429 with a Retry-After header; management
+// paths bypass the cap. A stream holds its slot for the whole stream duration
+// because it holds memory until the handler returns.
+func (s *Server) inFlightAdmissionMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s == nil || c == nil || c.Request == nil || isManagementAssetPath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+		limit := s.maxInFlightRequests()
+		current := s.inFlightRequests.Add(1)
+		if limit > 0 && current > limit {
+			s.inFlightRequests.Add(-1)
+			c.Header("Retry-After", "1")
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "too many in-flight requests"})
+			return
+		}
+		defer s.inFlightRequests.Add(-1)
 		c.Next()
 	}
 }

@@ -20,7 +20,8 @@ func ConvertInteractionsRequestToClaude(modelName string, inputRawJSON []byte, s
 // because its only media part has no Claude equivalent.
 func convertInteractionsRequestToClaude(modelName string, inputRawJSON []byte, stream bool) ([]byte, error) {
 	var run interactionsClaudeUserRun
-	root := gjson.ParseBytes(inputRawJSON)
+	// inputRawJSON is the immutable request payload for this call, so root may alias it.
+	root := util.ParseGJSONBytesNoCopy(inputRawJSON)
 	out := []byte(`{"model":"","max_tokens":32000,"messages":[]}`)
 	out, _ = sjson.SetBytes(out, "model", modelName)
 	if stream || root.Get("stream").Bool() {
@@ -164,7 +165,7 @@ func appendInteractionsInputToClaudeMessages(accumulator *translatorcommon.Claud
 	if input.Type == gjson.String {
 		step := []byte(`{"type":"user_input","content":[{"type":"text","text":""}]}`)
 		step, _ = sjson.SetBytes(step, "content.0.text", input.String())
-		appendInteractionsStepToClaude(accumulator, gjson.ParseBytes(step), "user", false, run)
+		appendInteractionsStepToClaude(accumulator, util.ParseGJSONBytesNoCopy(step), "user", false, run)
 		return
 	}
 	if input.IsObject() {
@@ -196,7 +197,7 @@ func appendInteractionsInputItemToClaude(accumulator *translatorcommon.ClaudeMes
 			wrapped, _ = sjson.SetBytes(wrapped, "type", "model_output")
 		}
 		wrapped, _ = sjson.SetRawBytes(wrapped, "content", []byte(step.Get("parts").Raw))
-		appendInteractionsStepToClaude(accumulator, gjson.ParseBytes(wrapped), "user", translatorcommon.IsInteractionsInstructionStep(step, false), run)
+		appendInteractionsStepToClaude(accumulator, util.ParseGJSONBytesNoCopy(wrapped), "user", translatorcommon.IsInteractionsInstructionStep(step, false), run)
 		return
 	}
 	stepType := step.Get("type").String()
@@ -242,7 +243,7 @@ func appendInteractionsStepToClaude(accumulator *translatorcommon.ClaudeMessageA
 	if stepContent.Type == gjson.String {
 		part := []byte(`{"type":"text","text":""}`)
 		part, _ = sjson.SetBytes(part, "text", stepContent.String())
-		appendPart(gjson.ParseBytes(part))
+		appendPart(util.ParseGJSONBytesNoCopy(part))
 	} else if stepContent.IsArray() {
 		stepContent.ForEach(func(_, part gjson.Result) bool {
 			appendPart(part)
@@ -251,7 +252,7 @@ func appendInteractionsStepToClaude(accumulator *translatorcommon.ClaudeMessageA
 	} else if text := step.Get("text"); text.Exists() {
 		part := []byte(`{"type":"text","text":""}`)
 		part, _ = sjson.SetBytes(part, "text", text.String())
-		appendPart(gjson.ParseBytes(part))
+		appendPart(util.ParseGJSONBytesNoCopy(part))
 	} else if interactionsClaudeDroppedMedia(step) != "" {
 		// A bare media content object stands for a step of its own.
 		appendPart(step)
@@ -556,7 +557,7 @@ func interactionsClaudeDroppedPart(part gjson.Result) string {
 // interactionsClaudePartIsSendable reports whether a converted Claude block gives
 // the model something to read. Blank text does not.
 func interactionsClaudePartIsSendable(converted []byte) bool {
-	block := gjson.ParseBytes(converted)
+	block := util.ParseGJSONBytesNoCopy(converted)
 	return block.Get("type").String() != "text" || strings.TrimSpace(block.Get("text").String()) != ""
 }
 

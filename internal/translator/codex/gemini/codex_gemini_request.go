@@ -40,7 +40,7 @@ func ConvertGeminiRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 	// Base template
 	out := []byte(`{"model":"","instructions":"","input":[]}`)
 
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 	inputItems := translatorcommon.NewRawArrayItems(root.Get("contents.#").Int())
 
 	// Pre-compute tool name shortening map from declared functionDeclarations
@@ -370,11 +370,11 @@ func ConvertGeminiRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 	out, _ = sjson.SetBytes(out, "include", []string{"reasoning.encrypted_content"})
 
 	var pathsToLower []string
-	toolsResult := gjson.GetBytes(out, "tools")
+	toolsResult := util.GetGJSONBytesNoCopy(out, "tools")
 	util.Walk(toolsResult, "", "type", &pathsToLower)
 	for _, p := range pathsToLower {
 		fullPath := fmt.Sprintf("tools.%s", p)
-		typeValue := gjson.GetBytes(out, fullPath)
+		typeValue := util.GetGJSONBytesNoCopy(out, fullPath)
 		if typeValue.Type != gjson.String {
 			continue
 		}
@@ -428,7 +428,7 @@ func setCodexToolChoiceFromGeminiToolConfig(out []byte, functionCallingConfig gj
 	case "NONE":
 		out, _ = sjson.SetBytes(out, "tool_choice", "none")
 	case "AUTO":
-		current := gjson.GetBytes(out, "tool_choice")
+		current := util.GetGJSONBytesNoCopy(out, "tool_choice")
 		if current.Type != gjson.String || current.String() != "auto" {
 			out, _ = sjson.SetBytes(out, "tool_choice", "auto")
 		}

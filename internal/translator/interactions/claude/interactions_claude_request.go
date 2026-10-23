@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -20,7 +21,7 @@ func ConvertClaudeRequestToInteractionsWithCompat(modelName string, inputRawJSON
 }
 
 func convertClaudeRequestToInteractions(modelName string, inputRawJSON []byte, stream, preserveEmptyThinkingBlocks bool) ([]byte, error) {
-	root := gjson.ParseBytes(inputRawJSON)
+	root := util.ParseGJSONBytesNoCopy(inputRawJSON)
 	out := []byte(`{"model":"","input":[]}`)
 	out, _ = sjson.SetBytes(out, "model", firstNonEmpty(modelName, root.Get("model").String()))
 	if streamValue, ok := claudeRequestStreamValue(root, stream); ok {

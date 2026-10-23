@@ -19,7 +19,7 @@ func ConvertOpenAIResponsesRequestToInteractions(modelName string, inputRawJSON 
 // part Interactions cannot receive when it leaves a user turn with nothing to send.
 func convertOpenAIResponsesRequestToInteractions(modelName string, inputRawJSON []byte, stream bool) ([]byte, error) {
 	var drops translatorcommon.UserTurnDrops
-	root := gjson.ParseBytes(inputRawJSON)
+	root := util.ParseGJSONBytesNoCopy(inputRawJSON)
 	out := []byte(`{"model":"","input":[]}`)
 	model := requestModel(modelName, root)
 	out, _ = sjson.SetBytes(out, "model", model)
@@ -116,7 +116,7 @@ func convertOpenAIResponsesRequestToInteractions(modelName string, inputRawJSON 
 }
 
 func ConvertInteractionsRequestToOpenAIResponses(modelName string, inputRawJSON []byte, stream bool) ([]byte, error) {
-	root := gjson.ParseBytes(inputRawJSON)
+	root := util.ParseGJSONBytesNoCopy(inputRawJSON)
 	out := []byte(`{"model":"","input":[]}`)
 	model := requestModel(modelName, root)
 	out, _ = sjson.SetBytes(out, "model", model)
@@ -348,7 +348,7 @@ func appendResponsesContentToInteractions(step []byte, content gjson.Result, dro
 			return
 		}
 		contentItems = append(contentItems, part)
-		if gjson.GetBytes(part, "type").String() != "text" || gjson.GetBytes(part, "text").String() != "" {
+		if util.GetGJSONBytesNoCopy(part, "type").String() != "text" || util.GetGJSONBytesNoCopy(part, "text").String() != "" {
 			sendable++
 		}
 	}
@@ -561,7 +561,7 @@ func appendResponsesToolsToInteractions(out []byte, root gjson.Result, forAntigr
 	}
 	targetRoot := root
 	if root.IsArray() {
-		targetRoot = gjson.ParseBytes([]byte(`{"tools":` + root.Raw + `}`))
+		targetRoot = util.ParseGJSONBytesNoCopy([]byte(`{"tools":` + root.Raw + `}`))
 	}
 	descriptors := util.CollectResponsesToolDescriptors(targetRoot)
 	if len(descriptors) == 0 {

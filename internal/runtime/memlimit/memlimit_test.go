@@ -97,6 +97,9 @@ func TestApplyGOMEMLIMITWins(t *testing.T) {
 	if applied != -1 {
 		t.Fatalf("expected no memory limit to be set, got %d", applied)
 	}
+	if got := Limit(); got != 268435456 {
+		t.Fatalf("expected Limit() to report the GOMEMLIMIT value 268435456, got %d", got)
+	}
 }
 
 func TestApplyGOMEMLIMITOff(t *testing.T) {
@@ -118,6 +121,9 @@ func TestApplyGOMEMLIMITOff(t *testing.T) {
 	}
 	if applied != -1 {
 		t.Fatalf("expected no memory limit to be set, got %d", applied)
+	}
+	if got := Limit(); got != 0 {
+		t.Fatalf("expected Limit() to report 0 when GOMEMLIMIT=off, got %d", got)
 	}
 }
 

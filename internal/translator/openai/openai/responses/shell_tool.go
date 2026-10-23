@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -75,7 +76,7 @@ func (idx *responsesToolIndex) shellHistory(items []gjson.Result) []gjson.Result
 		default:
 			continue
 		}
-		items[i] = gjson.ParseBytes(raw)
+		items[i] = util.ParseGJSONBytesNoCopy(raw)
 	}
 	return items
 }

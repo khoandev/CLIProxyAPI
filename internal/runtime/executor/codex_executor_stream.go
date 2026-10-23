@@ -445,6 +445,7 @@ codexStreamReadSuccess:
 	}
 	go func() {
 		defer close(out)
+		defer scanner.Close()
 		defer func() {
 			if errClose := httpResp.Body.Close(); errClose != nil {
 				log.Errorf("codex executor: close response body error: %v", errClose)

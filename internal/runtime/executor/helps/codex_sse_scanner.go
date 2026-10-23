@@ -52,9 +52,14 @@ type codexSSEQueuedItem struct {
 //
 // SetAssembly(false) makes the scanner read exactly as bufio.Scanner does, for a caller that
 // budgets every upstream line while it holds a stream.
+//
+// The line buffer comes from a shared pool. A caller that has copied (not aliased) everything it
+// needs from Bytes() should call Close to return it; a caller whose output may alias Bytes() must
+// not, as the buffer becomes writable by other requests once released.
 type CodexSSEScanner struct {
 	ctx      context.Context
 	lines    *bufio.Scanner
+	scanBuf  []byte
 	maxBytes int
 	// stock is set while assembly is off.
 	stock bool
@@ -78,8 +83,24 @@ type CodexSSEScanner struct {
 // as bufio.Scanner.Buffer does, and also the data lines collected for one event.
 func NewCodexSSEScanner(ctx context.Context, r io.Reader, maxBytes int) *CodexSSEScanner {
 	lines := bufio.NewScanner(r)
-	lines.Buffer(nil, maxBytes)
-	return &CodexSSEScanner{ctx: ctx, lines: lines, maxBytes: maxBytes}
+	// bufio.Scanner's max token size is max(maxBytes, cap(buf)), so a pooled 32KB
+	// buffer would silently raise a smaller line limit; only pool when it cannot.
+	var scanBuf []byte
+	if maxBytes >= scanBufferSize {
+		scanBuf = AcquireScanBuffer()
+	}
+	lines.Buffer(scanBuf, maxBytes)
+	return &CodexSSEScanner{ctx: ctx, lines: lines, scanBuf: scanBuf, maxBytes: maxBytes}
+}
+
+// Close returns the pooled line buffer. It is safe to call at most once, after the caller has
+// stopped reading Bytes() and no output aliases it. See the type comment.
+func (s *CodexSSEScanner) Close() {
+	if s.scanBuf == nil {
+		return
+	}
+	ReleaseScanBuffer(s.scanBuf)
+	s.scanBuf = nil
 }
 
 // SetOnLine sets a callback invoked for every physical line read from upstream.

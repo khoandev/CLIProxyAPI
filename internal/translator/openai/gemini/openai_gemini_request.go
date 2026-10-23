@@ -13,6 +13,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -25,7 +26,7 @@ func ConvertGeminiRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 	// Base OpenAI Chat Completions API template
 	out := []byte(`{"model":"","messages":[]}`)
 
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 
 	// Model mapping
 	out, _ = sjson.SetBytes(out, "model", modelName)

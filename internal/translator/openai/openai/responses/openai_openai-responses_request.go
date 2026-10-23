@@ -120,7 +120,7 @@ func convertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 						raw, _ = sjson.DeleteBytes(raw, "call_id")
 						raw, _ = sjson.DeleteBytes(raw, "tool_call_id")
 						raw, _ = sjson.DeleteBytes(raw, "callId")
-						inputItems[idx] = gjson.ParseBytes(raw)
+						inputItems[idx] = util.ParseGJSONBytesNoCopy(raw)
 					}
 				}
 			}
@@ -385,7 +385,7 @@ func convertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 				if arguments := item.Get("arguments"); arguments.Exists() {
 					toolCall, _ = sjson.SetBytes(toolCall, "function.arguments", arguments.String())
 				}
-				pendingToolCalls = append(pendingToolCalls, gjson.ParseBytes(toolCall).Value())
+				pendingToolCalls = append(pendingToolCalls, util.ParseGJSONBytesNoCopy(toolCall).Value())
 				if callID := translatorcommon.ExtractResponsesCallID(item); callID != "" {
 					pendingToolCallIDs = append(pendingToolCallIDs, callID)
 				}
@@ -434,7 +434,7 @@ func convertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 				toolCall, _ = sjson.SetBytes(toolCall, "function.name", functionName)
 				wrappedArgs, _ := sjson.SetBytes([]byte(`{"input":""}`), "input", item.Get("input").String())
 				toolCall, _ = sjson.SetBytes(toolCall, "function.arguments", string(wrappedArgs))
-				pendingToolCalls = append(pendingToolCalls, gjson.ParseBytes(toolCall).Value())
+				pendingToolCalls = append(pendingToolCalls, util.ParseGJSONBytesNoCopy(toolCall).Value())
 				if callID := translatorcommon.ExtractResponsesCallID(item); callID != "" {
 					pendingToolCallIDs = append(pendingToolCallIDs, callID)
 				}
@@ -489,7 +489,7 @@ func convertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 	// so merge both sources.
 	var chatCompletionsTools []interface{}
 	for _, chatTool := range toolIndex.chatTools() {
-		chatCompletionsTools = append(chatCompletionsTools, gjson.ParseBytes(chatTool).Value())
+		chatCompletionsTools = append(chatCompletionsTools, util.ParseGJSONBytesNoCopy(chatTool).Value())
 	}
 	if len(chatCompletionsTools) > 0 {
 		out, _ = sjson.SetBytes(out, "tools", chatCompletionsTools)
@@ -557,7 +557,7 @@ func responsesInputAudioToChatPart(contentItem gjson.Result) ([]byte, bool) {
 }
 
 func convertResponsesToolChoiceToChatCompletions(toolChoice gjson.Result, inputRawJSON []byte) []byte {
-	return convertResponsesToolChoiceWithIndex(toolChoice, newResponsesToolIndex(gjson.ParseBytes(inputRawJSON)))
+	return convertResponsesToolChoiceWithIndex(toolChoice, newResponsesToolIndex(util.ParseGJSONBytesNoCopy(inputRawJSON)))
 }
 
 func convertResponsesToolChoiceWithIndex(toolChoice gjson.Result, toolIndex *responsesToolIndex) []byte {
@@ -633,7 +633,7 @@ func appendStandaloneResponsesToolOutputAsUser(output gjson.Result, setContent f
 	if output.Exists() {
 		userMessage = setContent(userMessage, output)
 	}
-	content := gjson.GetBytes(userMessage, "content")
+	content := util.GetGJSONBytesNoCopy(userMessage, "content")
 	if !content.Exists() {
 		return
 	}
