@@ -10,7 +10,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -91,7 +90,7 @@ type fileBodySourceFactory interface {
 
 type deferredRequestBodyCapture struct {
 	body          io.ReadCloser
-	file          *os.File
+	writer        io.WriteCloser
 	source        *logging.FileBodySource
 	contentLength int64
 	bytesRead     int64
@@ -118,14 +117,14 @@ func attachDeferredRequestBodyCapture(req *http.Request, logger logging.RequestL
 	if errSource != nil {
 		return nil
 	}
-	file, errPart := source.CreatePart("body")
+	writer, errPart := source.CreatePart("body")
 	if errPart != nil {
 		_ = source.Cleanup()
 		return nil
 	}
 	capture := &deferredRequestBodyCapture{
 		body:          req.Body,
-		file:          file,
+		writer:        writer,
 		source:        source,
 		contentLength: req.ContentLength,
 	}
@@ -146,7 +145,7 @@ func (c *deferredRequestBodyCapture) Read(payload []byte) (int, error) {
 		return n, errRead
 	}
 	c.bytesRead += int64(n)
-	if c.file == nil || c.captureErr != nil {
+	if c.writer == nil || c.captureErr != nil {
 		return n, errRead
 	}
 
@@ -160,7 +159,7 @@ func (c *deferredRequestBodyCapture) Read(payload []byte) (int, error) {
 		writeLength = remaining
 		c.truncated = true
 	}
-	written, errWrite := c.file.Write(payload[:int(writeLength)])
+	written, errWrite := c.writer.Write(payload[:int(writeLength)])
 	c.bytesCaptured += int64(written)
 	if errWrite != nil {
 		c.captureErr = errWrite
@@ -168,10 +167,10 @@ func (c *deferredRequestBodyCapture) Read(payload []byte) (int, error) {
 		c.captureErr = io.ErrShortWrite
 	}
 	if c.captureErr != nil {
-		if errClose := c.file.Close(); errClose != nil {
+		if errClose := c.writer.Close(); errClose != nil {
 			c.captureErr = fmt.Errorf("%v; close capture file: %w", c.captureErr, errClose)
 		}
-		c.file = nil
+		c.writer = nil
 	}
 	return n, errRead
 }
@@ -195,11 +194,11 @@ func (c *deferredRequestBodyCapture) Finish() error {
 		return c.captureErr
 	}
 	c.finished = true
-	if c.file != nil {
-		if errClose := c.file.Close(); errClose != nil && c.captureErr == nil {
+	if c.writer != nil {
+		if errClose := c.writer.Close(); errClose != nil && c.captureErr == nil {
 			c.captureErr = errClose
 		}
-		c.file = nil
+		c.writer = nil
 	}
 	return c.captureErr
 }
@@ -337,14 +336,12 @@ func captureRequestInfo(c *gin.Context, captureBody bool) (*RequestInfo, error) 
 	// Capture request body
 	var body []byte
 	if captureBody && c.Request.Body != nil {
-		// Read the body
-		bodyBytes, err := io.ReadAll(c.Request.Body)
+		// Read the body once and share it with the later readers.
+		bodyBytes, err := util.SharedRequestBody(c)
 		if err != nil {
 			return nil, err
 		}
 
-		// Restore the body for the actual request processing
-		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		maxBytes := c.GetInt64("maxRequestBodyBytes")
 		if maxBytes > 0 {
 			body = decodeCapturedRequestBodyForLogWithLimit(bodyBytes, c.Request.Header.Get("Content-Encoding"), maxBytes)

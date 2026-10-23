@@ -39,6 +39,96 @@ func TestFillFirstSelectorPick_Deterministic(t *testing.T) {
 	}
 }
 
+func TestFillFirstSelectorPick_ForceBalanceCycles(t *testing.T) {
+	t.Parallel()
+
+	selector := &FillFirstSelector{}
+	forceAttrs := map[string]string{"force_balance": "true"}
+	auths := []*Auth{
+		{ID: "b", Attributes: forceAttrs},
+		{ID: "a", Attributes: forceAttrs},
+		{ID: "c", Attributes: forceAttrs},
+	}
+
+	// Sorted available order is a,b,c — same cycle as RoundRobin.
+	want := []string{"a", "b", "c", "a", "b", "c"}
+	for i, id := range want {
+		got, err := selector.Pick(context.Background(), "gemini", "", cliproxyexecutor.Options{}, auths)
+		if err != nil {
+			t.Fatalf("Pick() #%d error = %v", i, err)
+		}
+		if got == nil {
+			t.Fatalf("Pick() #%d auth = nil", i)
+		}
+		if got.ID != id {
+			t.Fatalf("Pick() #%d auth.ID = %q, want %q", i, got.ID, id)
+		}
+	}
+}
+
+func TestSessionAffinitySelector_ForceBalanceSkipsSticky(t *testing.T) {
+	t.Parallel()
+
+	fallback := &RoundRobinSelector{}
+	selector := NewSessionAffinitySelector(fallback)
+
+	forceAttrs := map[string]string{"force_balance": "true"}
+	auths := []*Auth{
+		{ID: "auth-a", Attributes: forceAttrs},
+		{ID: "auth-b", Attributes: forceAttrs},
+	}
+
+	payload := []byte(`{"metadata":{"user_id":"user_xxx_account__session_ac980658-63bd-4fb3-97ba-8da64cb1e344"}}`)
+	opts := cliproxyexecutor.Options{OriginalRequest: payload}
+
+	seen := map[string]int{}
+	for i := 0; i < 4; i++ {
+		got, err := selector.Pick(context.Background(), "claude", "claude-3", opts, auths)
+		if err != nil {
+			t.Fatalf("Pick() #%d error = %v", i, err)
+		}
+		if got == nil {
+			t.Fatalf("Pick() #%d auth = nil", i)
+		}
+		seen[got.ID]++
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected force-balance to skip sticky and cycle keys, got single auth %v", seen)
+	}
+}
+
+func TestSessionAffinitySelector_WithoutForceBalanceStillSticky(t *testing.T) {
+	t.Parallel()
+
+	fallback := &RoundRobinSelector{}
+	selector := NewSessionAffinitySelector(fallback)
+
+	auths := []*Auth{
+		{ID: "auth-a"},
+		{ID: "auth-b"},
+	}
+
+	payload := []byte(`{"metadata":{"user_id":"user_xxx_account__session_ac980658-63bd-4fb3-97ba-8da64cb1e344"}}`)
+	opts := cliproxyexecutor.Options{OriginalRequest: payload}
+
+	first, err := selector.Pick(context.Background(), "claude", "claude-3", opts, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if first == nil {
+		t.Fatalf("Pick() returned nil")
+	}
+	for i := 0; i < 5; i++ {
+		got, err := selector.Pick(context.Background(), "claude", "claude-3", opts, auths)
+		if err != nil {
+			t.Fatalf("Pick() #%d error = %v", i, err)
+		}
+		if got.ID != first.ID {
+			t.Fatalf("Pick() #%d auth.ID = %q, want sticky %q", i, got.ID, first.ID)
+		}
+	}
+}
+
 func TestRoundRobinSelectorPick_CyclesDeterministic(t *testing.T) {
 	t.Parallel()
 

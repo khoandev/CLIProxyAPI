@@ -70,7 +70,9 @@ func TestV8ExampleLoadsAndRoundTrips(t *testing.T) {
 	if cfg.Port != 8317 || len(cfg.APIKeys) != 3 || len(cfg.GeminiKey) != 3 || len(cfg.CodexKey) != 1 || len(cfg.ClaudeKey) != 2 || len(cfg.VertexCompatAPIKey) != 1 || len(cfg.XAIKey) != 1 || len(cfg.MetaKey) != 1 || len(cfg.InteractionsKey) != 1 || len(cfg.OpenAICompatibility) != 1 {
 		t.Fatal("v8 example fields did not reach runtime config")
 	}
-	if !cfg.QuotaExceeded.AntigravityCredits || cfg.QuotaExceeded.SwitchProject || cfg.QuotaExceeded.SwitchPreviewModel {
+	// switch-preview-model is not asserted here: it defaults to true when omitted from YAML,
+	// which is covered by quota_exceeded_defaults_test.go.
+	if !cfg.QuotaExceeded.AntigravityCredits || cfg.QuotaExceeded.SwitchProject {
 		t.Fatal("legacy-only quota examples must remain commented")
 	}
 	path := filepath.Join(t.TempDir(), "config.yaml")

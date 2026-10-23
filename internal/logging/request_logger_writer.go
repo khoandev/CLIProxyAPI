@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -115,18 +114,6 @@ func (l *FileRequestLogger) logRequestWithSources(url, method string, requestHea
 		filename = l.generateErrorFilename(url, requestID)
 	}
 
-	requestBodyPath, errTemp := l.writeRequestBodyTempFile(body)
-	if errTemp != nil {
-		log.WithError(errTemp).Warn("failed to create request body temp file, falling back to direct write")
-	}
-	if requestBodyPath != "" {
-		defer func() {
-			if errRemove := os.Remove(requestBodyPath); errRemove != nil {
-				log.WithError(errRemove).Warn("failed to remove request body temp file")
-			}
-		}()
-	}
-
 	responseToWrite, decompressErr := l.decompressResponse(responseHeaders, response)
 	if decompressErr != nil {
 		// If decompression fails, continue with original response and annotate the log output.
@@ -144,7 +131,7 @@ func (l *FileRequestLogger) logRequestWithSources(url, method string, requestHea
 		method,
 		requestHeaders,
 		body,
-		requestBodyPath,
+		"",
 		websocketTimeline,
 		websocketTimelineSource,
 		apiRequest,
@@ -202,7 +189,7 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 		if client == nil || !client.HeartbeatOK() {
 			return &NoOpStreamingLogWriter{}, nil
 		}
-		return newHomeStreamingLogWriter(url, method, headers, body, requestID), nil
+		return newHomeStreamingLogWriter(l.logsDir, url, method, headers, body, requestID), nil
 	}
 
 	// Ensure logs directory exists
@@ -220,36 +207,24 @@ func (l *FileRequestLogger) LogStreamingRequest(url, method string, headers map[
 		requestHeaders[key] = headerValues
 	}
 
-	requestBodyPath, errTemp := l.writeRequestBodyTempFile(body)
-	if errTemp != nil {
-		return nil, fmt.Errorf("failed to create request body temp file: %w", errTemp)
+	requestSpool := newBodySpool(l.logsDir, defaultSpoolMemoryLimit)
+	if len(body) > 0 {
+		if _, errWrite := requestSpool.Write(body); errWrite != nil {
+			return nil, fmt.Errorf("failed to spool request body: %w", errWrite)
+		}
 	}
-
-	responseBodyFile, errCreate := os.CreateTemp(l.logsDir, "response-body-*.tmp")
-	if errCreate != nil {
-		_ = os.Remove(requestBodyPath)
-		return nil, fmt.Errorf("failed to create response body temp file: %w", errCreate)
-	}
-	responseBodyPath := responseBodyFile.Name()
 
 	// Create streaming writer
 	writer := &FileStreamingLogWriter{
-		logsDir:          l.logsDir,
-		logFilename:      filename,
-		url:              url,
-		method:           method,
-		timestamp:        time.Now(),
-		requestHeaders:   requestHeaders,
-		requestBodyPath:  requestBodyPath,
-		responseBodyPath: responseBodyPath,
-		responseBodyFile: responseBodyFile,
-		chunkChan:        make(chan []byte, 100), // Buffered channel for async writes
-		closeChan:        make(chan struct{}),
-		errorChan:        make(chan error, 1),
+		logsDir:        l.logsDir,
+		logFilename:    filename,
+		url:            url,
+		method:         method,
+		timestamp:      time.Now(),
+		requestHeaders: requestHeaders,
+		requestSpool:   requestSpool,
+		responseSpool:  newBodySpool(l.logsDir, defaultSpoolMemoryLimit),
 	}
-
-	// Start async writer goroutine
-	go writer.asyncWriter()
 
 	return writer, nil
 }
@@ -426,23 +401,4 @@ func (l *FileRequestLogger) cleanupOldErrorLogs() error {
 	}
 
 	return nil
-}
-
-func (l *FileRequestLogger) writeRequestBodyTempFile(body []byte) (string, error) {
-	tmpFile, errCreate := os.CreateTemp(l.logsDir, "request-body-*.tmp")
-	if errCreate != nil {
-		return "", errCreate
-	}
-	tmpPath := tmpFile.Name()
-
-	if _, errCopy := io.Copy(tmpFile, bytes.NewReader(body)); errCopy != nil {
-		_ = tmpFile.Close()
-		_ = os.Remove(tmpPath)
-		return "", errCopy
-	}
-	if errClose := tmpFile.Close(); errClose != nil {
-		_ = os.Remove(tmpPath)
-		return "", errClose
-	}
-	return tmpPath, nil
 }

@@ -98,6 +98,15 @@ func describeOpenAICompatibilityUpdate(oldEntry, newEntry config.OpenAICompatibi
 	if !equalStringMap(oldEntry.Headers, newEntry.Headers) {
 		details = append(details, "headers updated")
 	}
+	if oldEntry.ResponsesPassthrough != newEntry.ResponsesPassthrough {
+		details = append(details, fmt.Sprintf("responses-passthrough %t -> %t", oldEntry.ResponsesPassthrough, newEntry.ResponsesPassthrough))
+	}
+	if oldEntry.ResponsesWebsocket != newEntry.ResponsesWebsocket {
+		details = append(details, fmt.Sprintf("responses-websocket %t -> %t", oldEntry.ResponsesWebsocket, newEntry.ResponsesWebsocket))
+	}
+	if oldEntry.ResponsesCompaction != newEntry.ResponsesCompaction {
+		details = append(details, fmt.Sprintf("responses-compaction %t -> %t", oldEntry.ResponsesCompaction, newEntry.ResponsesCompaction))
+	}
 	if len(details) == 0 {
 		return ""
 	}
@@ -173,7 +182,7 @@ func openAICompatSignature(entry config.OpenAICompatibility) string {
 		if name == "" && alias == "" {
 			continue
 		}
-		models = append(models, strings.ToLower(name)+"|"+strings.ToLower(alias)+"|"+strings.TrimSpace(model.DisplayName)+"|"+fmt.Sprintf("image=%t", model.Image))
+		models = append(models, strings.ToLower(name)+"|"+strings.ToLower(alias)+"|"+strings.TrimSpace(model.DisplayName)+"|"+fmt.Sprintf("image=%t", model.ImageEnabled())+"|"+fmt.Sprintf("video=%t", model.VideoEnabled()))
 	}
 	if len(models) > 0 {
 		sort.Strings(models)
@@ -196,6 +205,15 @@ func openAICompatSignature(entry config.OpenAICompatibility) string {
 	// Intentionally exclude API key material; only count non-empty entries.
 	if count := countAPIKeys(entry); count > 0 {
 		parts = append(parts, fmt.Sprintf("api_keys=%d", count))
+	}
+	if entry.ResponsesPassthrough {
+		parts = append(parts, fmt.Sprintf("rsp=%t", entry.ResponsesPassthrough))
+	}
+	if entry.ResponsesWebsocket {
+		parts = append(parts, fmt.Sprintf("rsw=%t", entry.ResponsesWebsocket))
+	}
+	if entry.ResponsesCompaction {
+		parts = append(parts, fmt.Sprintf("rsc=%t", entry.ResponsesCompaction))
 	}
 
 	if len(parts) == 0 {

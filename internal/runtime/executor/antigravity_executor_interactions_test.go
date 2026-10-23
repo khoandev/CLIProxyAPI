@@ -48,6 +48,8 @@ func TestAntigravityExecutorExecuteStreamTranslatesInteractionsRequest(t *testin
 			"expired":      time.Now().Add(time.Hour).Format(time.RFC3339),
 		},
 	}
+	// gemini-3.8-flash-high is a registered antigravity model with discrete
+	// thinking levels; an unregistered model falls back to the budget format.
 	payload := []byte(`{"model":"gemini-3.8-flash-high","input":[{"type":"user_input","content":[{"type":"text","text":"hi"}]}],"tools":[{"name":"get_weather","description":"weather","type":"function","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}],"generation_config":{"tool_choice":"auto","thinking_level":"high","thinking_summaries":"auto"},"stream":true,"store":false}`)
 	result, errExecute := exec.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{
 		Model:   "gemini-3.8-flash-high",

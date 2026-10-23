@@ -64,7 +64,7 @@ func compileOAuthModelAliasTable(aliases map[string][]internalconfig.OAuthModelA
 			rev[aliasKey] = oauthModelAliasEntry{
 				upstreamModel: name,
 				configAlias:   alias,
-				forceMapping:  entry.ForceMapping,
+				forceMapping:  entry.GetForceMapping(),
 			}
 		}
 		if len(rev) > 0 {
@@ -354,22 +354,22 @@ func resolveUpstreamModelFromAliases(aliases []internalconfig.OAuthModelAlias, r
 				continue
 			}
 			if strings.EqualFold(original, baseModel) {
-				if !entry.ForceMapping {
+				if !entry.GetForceMapping() {
 					return OAuthModelAliasResult{}
 				}
 				return OAuthModelAliasResult{
 					UpstreamModel: preserveResolvedModelSuffix(original, requestResult),
-					ForceMapping:  entry.ForceMapping,
+					ForceMapping:  entry.GetForceMapping(),
 					OriginalAlias: oauthModelAliasForceMappingResponseModel(alias),
 				}
 			}
 			originalAlias := requestedModel
-			if entry.ForceMapping {
+			if entry.GetForceMapping() {
 				originalAlias = oauthModelAliasForceMappingResponseModel(alias)
 			}
 			return OAuthModelAliasResult{
 				UpstreamModel: preserveResolvedModelSuffix(original, requestResult),
-				ForceMapping:  entry.ForceMapping,
+				ForceMapping:  entry.GetForceMapping(),
 				OriginalAlias: originalAlias,
 			}
 		}

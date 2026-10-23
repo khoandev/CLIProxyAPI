@@ -245,6 +245,19 @@ requests:
   # When > 0, emit blank lines every N seconds for non-streaming responses to prevent idle timeouts.
   nonstream-keepalive-interval: 0
 
+  # When true, request the upstream fast service tier for every request.
+  # Codex requests always carry service_tier=priority; Claude requests keep their
+  # speed=fast field and the fast-mode beta. Default is false.
+  fast-service-tier: false
+
+  # When true (default), an OpenAI-compatible credential that answers HTTP 429 rotates
+  # to the next key in its group before the request is retried. Set to false to keep
+  # the same key and return the upstream error.
+  openai-compat-429-key-rotation: true
+
+  # Default is nil (enabled). Set to false to disable cross-provider fallback globally.
+  fallback-to-all-providers: true
+
   # Streaming behavior (SSE keep-alives + safe bootstrap retries).
   # streaming:
   #   keepalive-seconds: 15         # Default: 0 (disabled). <= 0 disables keep-alives.
@@ -1185,6 +1198,15 @@ observability:
     # Default: 60. Max: 3600.
     redis-usage-queue-retention-seconds: 60
 
+    # Rescales reported cache-read tokens. Cache-read tokens keep this fraction of their
+    # cache price, and the remainder is billed as ordinary input tokens, so the effective
+    # cost per request goes up. Total token counts are never changed.
+    # Applies to both the internal usage payload and the usage returned to clients.
+    # Must be between 0 and 1. Set to 1 to report upstream values unchanged, or 0 to report
+    # no cache savings at all.
+    # Default: 0.9.
+    cache-hit-cost-ratio: 0.9
+
   # Enable pprof HTTP debug server (host:port). Keep it bound to localhost for safety.
   pprof:
     enable: false
@@ -1264,6 +1286,9 @@ plugins:
 #   request-retry: 3                 # now routing.retry.request-retry
 #   debug: false                     # now observability.logs.debug
 #   proxy-url: ""                    # now requests.proxy-url
+#   fast-service-tier: false         # now requests.fast-service-tier
+#   openai-compat-429-key-rotation: true  # now requests.openai-compat-429-key-rotation
+#   fallback-to-all-providers: true  # now requests.fallback-to-all-providers
 #   auth-dir: "~/.cli-proxy-api"     # now oauth.auth-dir
 #   codex:                           # now oauth.providers.codex
 #     disable-codex-cloaking: false

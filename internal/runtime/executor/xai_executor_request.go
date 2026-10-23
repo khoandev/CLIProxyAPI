@@ -554,7 +554,49 @@ func xaiVideoEndpointPath(opts cliproxyexecutor.Options) string {
 	if strings.HasSuffix(path, "/videos/generations") {
 		return xaiVideosGenerationsPath
 	}
+	// characters create: POST /videos/characters
+	if strings.HasSuffix(path, "/videos/characters") {
+		return xaiVideosCharactersPath
+	}
 	return ""
+}
+
+// xaiVideoRouteAction classifies a video request into a higher-level action
+// used by executeVideos to pick the correct HTTP method and URL.
+type xaiVideoRouteAction int
+
+const (
+	xaiVideoActionPost         xaiVideoRouteAction = iota // POST to a fixed endpoint path
+	xaiVideoActionGet                                     // GET /videos (list) or GET /videos/:id
+	xaiVideoActionDelete                                  // DELETE /videos/:id
+	xaiVideoActionRemix                                   // POST /videos/:id/remix
+	xaiVideoActionGetCharacter                            // GET /videos/characters/:id
+)
+
+// xaiVideoAction returns the action and any path-embedded ID derived from the Gin route pattern.
+// It relies solely on the request path recorded in metadata, not on opts.Method, because
+// ExecuteWithAuthManager does not propagate a per-request HTTP method.
+//
+//   - /v1/videos                              alt="videos/list"      → GET /videos (list)
+//   - /v1/videos/:request_id                  alt="videos/delete"    → DELETE /videos/:id
+//   - /v1/videos/:request_id/remix            alt="videos/remix"     → POST /videos/:id/remix
+//   - /v1/videos/characters                   path suffix → POST handled by xaiVideoEndpointPath
+//   - /v1/videos/characters/:character_id     alt="videos/characters/get" → GET /videos/characters/:id
+//
+// The alt string comes from the third parameter of ExecuteWithAuthManager.
+func xaiVideoAction(opts cliproxyexecutor.Options, payload []byte) (action xaiVideoRouteAction, videoID string, characterID string) {
+	switch opts.Alt {
+	case "videos/list":
+		return xaiVideoActionGet, "", ""
+	case "videos/delete":
+		return xaiVideoActionDelete, strings.TrimSpace(gjson.GetBytes(payload, "request_id").String()), ""
+	case "videos/remix":
+		return xaiVideoActionRemix, strings.TrimSpace(gjson.GetBytes(payload, "request_id").String()), ""
+	case "videos/characters/get":
+		return xaiVideoActionGetCharacter, "", strings.TrimSpace(gjson.GetBytes(payload, "character_id").String())
+	}
+	// Everything else is a POST to a fixed endpoint path.
+	return xaiVideoActionPost, "", ""
 }
 
 func xaiMetadataString(meta map[string]any, key string) string {

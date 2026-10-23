@@ -81,7 +81,7 @@ func RecordAPIRequest(ctx context.Context, cfg *config.Config, info UpstreamRequ
 
 	requestText := ""
 	if source, ok := apiRequestSource(ginCtx); ok {
-		if errWrite := source.AppendBytes([]byte(builder.String())); errWrite == nil {
+		if errWrite := source.AppendString(builder.String()); errWrite == nil {
 			if len(info.Body) > 0 {
 				if errBody := source.AppendBytes(info.Body); errBody != nil {
 					log.WithError(errBody).Warn("failed to append api request body log part")

@@ -8,6 +8,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/access"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/cache"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cachecost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/githubauth"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
@@ -98,6 +99,10 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 
 	if oldCfg == nil || oldCfg.RedisUsageQueueRetentionSeconds != cfg.RedisUsageQueueRetentionSeconds {
 		redisqueue.SetRetentionSeconds(cfg.RedisUsageQueueRetentionSeconds)
+	}
+
+	if oldCfg == nil || oldCfg.CacheHitCostRatioValue() != cfg.CacheHitCostRatioValue() {
+		cachecost.SetRatio(cfg.CacheHitCostRatioValue())
 	}
 
 	if s.requestLogger != nil && (oldCfg == nil || oldCfg.ErrorLogsMaxFiles != cfg.ErrorLogsMaxFiles) {

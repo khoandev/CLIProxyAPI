@@ -25,7 +25,7 @@ func TestManagerAliasQuotaFailoverWithUnobservedTargetModel(t *testing.T) {
 				manager := NewManager(nil, newSelector(), nil)
 				manager.SetRetryConfig(3, 30*time.Second, 0)
 				manager.SetOAuthModelAlias(map[string][]internalconfig.OAuthModelAlias{
-					"codex": {{Name: targetModel, Alias: routeModel, Fork: true}},
+					"codex": {{Name: targetModel, Alias: routeModel, Fork: true, ForceMapping: boolPtr(false)}},
 				})
 				highID, lowID := "alias-quota-high-"+t.Name(), "alias-quota-low-"+t.Name()
 				for _, candidate := range []*Auth{

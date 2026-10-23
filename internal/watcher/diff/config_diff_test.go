@@ -337,12 +337,12 @@ func TestBuildConfigChangeDetails_XAIForceMappingOnly(t *testing.T) {
 	oldCfg := &config.Config{XAIKey: []config.XAIKey{{
 		APIKey:  "xai-key",
 		BaseURL: "https://api.x.ai/v1",
-		Models:  []config.XAIModel{{Name: "grok-4.5", Alias: "grok-latest"}},
+		Models:  []config.XAIModel{{Name: "grok-4.5", Alias: "grok-latest", ForceMapping: boolPtr(false)}},
 	}}}
 	newCfg := &config.Config{XAIKey: []config.XAIKey{{
 		APIKey:  "xai-key",
 		BaseURL: "https://api.x.ai/v1",
-		Models:  []config.XAIModel{{Name: "grok-4.5", Alias: "grok-latest", ForceMapping: true}},
+		Models:  []config.XAIModel{{Name: "grok-4.5", Alias: "grok-latest", ForceMapping: boolPtr(true)}},
 	}}}
 
 	changes := BuildConfigChangeDetails(oldCfg, newCfg)

@@ -40,14 +40,42 @@ func (h *BaseAPIHandler) ExecuteImageWithAuthManager(ctx context.Context, handle
 	return h.executeWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, true)
 }
 
+// ExecuteVideoWithAuthManager executes an OpenAI-compatible video endpoint request.
+// Unlike ExecuteWithAuthManager, it allows routing with an empty model name so that
+// endpoints without a model in the body (list, delete, get-character) can still reach
+// an openai-compatibility or xai provider via first-available credential selection.
+func (h *BaseAPIHandler) ExecuteVideoWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	return h.executeWithAuthManagerFormats(ctx, handlerType, handlerType, modelName, rawJSON, alt, false, modelExecutionOptions{
+		AllowVideoModel: true,
+	})
+}
+
 func (h *BaseAPIHandler) executeWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, allowImageModel bool) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	return h.executeWithAuthManagerFormats(ctx, handlerType, handlerType, modelName, rawJSON, alt, allowImageModel, modelExecutionOptions{})
 }
 
+// executeWithAuthManagerFormats resolves the route and provider set once, then runs the
+// execution through the model version fallback chain.
 func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entryProtocol, exitProtocol, modelName string, rawJSON []byte, alt string, allowImageModel bool, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	originalRequestedModel := modelName
 	// Speech-only models are reachable solely through the speech entry protocol.
 	execOptions.AllowSpeechModel = isModelExecutionSpeechProtocol(entryProtocol)
+	routeDecision := h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, false, execOptions)
+	if routeDecision.ExecutorPluginID != "" {
+		responseProtocol := modelExecutionResponseProtocol(entryProtocol, exitProtocol)
+		return h.executeWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+	}
+	providers, _, errMsg := h.providersForExecution(modelName, originalRequestedModel, allowImageModel, routeDecision, execOptions)
+	if errMsg != nil {
+		return nil, nil, errMsg
+	}
+	return h.executeWithAuthManagerFormatsWithVersionFallback(ctx, entryProtocol, exitProtocol, modelName, rawJSON, alt, allowImageModel, execOptions, providers)
+}
+
+// executeWithAuthManagerFormatsOnce performs a single non-streaming execution attempt
+// without the model version fallback chain.
+func (h *BaseAPIHandler) executeWithAuthManagerFormatsOnce(ctx context.Context, entryProtocol, exitProtocol, modelName string, rawJSON []byte, alt string, allowImageModel bool, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	originalRequestedModel := modelName
 	routeDecision := h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, false, execOptions)
 	responseProtocol := modelExecutionResponseProtocol(entryProtocol, exitProtocol)
 	if errMsg := validateNativeInteractionsExecution(entryProtocol, execOptions, routeDecision); errMsg != nil {
@@ -68,6 +96,9 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = originalRequestedModel
 	addAuthSelectionModelMetadata(reqMeta, execOptions.AuthSelectionModel)
 	addModelExecutionSourceMetadata(reqMeta, execOptions.InternalSource)
+	if execOptions.RequestPath != "" {
+		reqMeta[coreexecutor.RequestPathMetadataKey] = execOptions.RequestPath
+	}
 	setReasoningEffortMetadata(reqMeta, entryProtocol, normalizedModel, rawJSON)
 	setServiceTierMetadata(reqMeta, rawJSON)
 	setGenerateMetadata(reqMeta, rawJSON)
@@ -89,6 +120,7 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 		ResponseFormat:              sdktranslator.FromString(responseProtocol),
 		Headers:                     modelExecutionHeaders(ctx, execOptions.Headers),
 		Query:                       modelExecutionQuery(ctx, execOptions.Query),
+		Method:                      execOptions.Method,
 		RequestAfterAuthInterceptor: h.requestAfterAuthInterceptor(afterAuthCapture, lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
 		WebSocketResponseObserver:   h.webSocketResponseObserver(lifecycle.requestID(), execOptions.SkipInterceptorPluginID),
 		ProxyURL:                    execOptions.ProxyURL,
@@ -125,7 +157,24 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 	return h.executeCountWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, modelExecutionOptions{})
 }
 
+// executeCountWithAuthManager resolves the route and provider set once, then runs the
+// token count through the model version fallback chain.
 func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	originalRequestedModel := modelName
+	routeDecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, false, execOptions)
+	if routeDecision.ExecutorPluginID != "" {
+		return h.countWithPluginExecutor(ctx, handlerType, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
+	}
+	providers, _, errMsg := h.providersForExecution(modelName, originalRequestedModel, false, routeDecision, execOptions)
+	if errMsg != nil {
+		return nil, nil, errMsg
+	}
+	return h.executeCountWithAuthManagerWithVersionFallback(ctx, handlerType, modelName, rawJSON, alt, execOptions, providers)
+}
+
+// executeCountWithAuthManagerOnce performs a single token count attempt without the
+// model version fallback chain.
+func (h *BaseAPIHandler) executeCountWithAuthManagerOnce(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	originalRequestedModel := modelName
 	routeDecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, false, execOptions)
 	if routeDecision.ExecutorPluginID != "" {

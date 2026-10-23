@@ -39,6 +39,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.Discovery.ServiceType = DefaultDiscoveryServiceType
 	cfg.Discovery.Subtypes = []string{"_chat-completions", "_responses", "_messages", "_generate-content", "_interactions"}
 	cfg.RemoteManagement.PanelGitHubRepository = DefaultPanelGitHubRepository
+	cfg.QuotaExceeded.SwitchPreviewModel = true
 	cfg.CredentialInFlight = DefaultCredentialInFlightConfig()
 
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
@@ -98,6 +99,8 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 		log.WithField("value", cfg.RedisUsageQueueRetentionSeconds).Warn("redis-usage-queue-retention-seconds too large; clamping to 3600")
 		cfg.RedisUsageQueueRetentionSeconds = 3600
 	}
+
+	cfg.CacheHitCostRatio = normalizeCacheHitCostRatio(cfg.CacheHitCostRatio)
 
 	if cfg.MaxRetryCredentials < 0 {
 		cfg.MaxRetryCredentials = 0

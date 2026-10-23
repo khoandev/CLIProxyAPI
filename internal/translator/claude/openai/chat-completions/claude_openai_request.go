@@ -60,7 +60,7 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 	out, _ = sjson.SetBytes(out, "metadata.user_id", userID)
 	out, _ = sjson.SetBytes(out, "max_tokens", defaultClaudeChatMaxTokensForModel(modelName))
 
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 
 	// Convert OpenAI reasoning_effort to Claude thinking config.
 	if v := root.Get("reasoning_effort"); v.Exists() {
@@ -222,7 +222,9 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 				// Handle content based on its type
 				if contentResult.Exists() && contentResult.Type == gjson.String && strings.TrimSpace(contentResult.String()) != "" {
 					part := []byte(`{"type":"text","text":""}`)
-					part, _ = sjson.SetBytes(part, "text", contentResult.String())
+					// The raw value is already an escaped JSON string, so it is
+					// written as is instead of being unescaped and escaped again.
+					part, _ = sjson.SetRawBytes(part, "text", util.GJSONRawBytesNoCopy(contentResult))
 					contentBlocks = append(contentBlocks, part)
 				} else if contentResult.Exists() && contentResult.IsArray() {
 					contentResult.ForEach(func(_, part gjson.Result) bool {
@@ -347,9 +349,9 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 	if len(systemBlocks) > 0 {
 		out, _ = sjson.SetRawBytes(out, "system", common.JoinRawArray(systemBlocks))
 	}
-	if len(messageBlocks) > 0 {
-		out = common.SetRawArrayItems(out, "messages", messageBlocks)
-	}
+	// The messages are spliced in at the end of the build, once every other
+	// field is set. Writing a field rewrites the whole document, so doing it
+	// before the messages are in would copy the conversation again per field.
 
 	// Tools mapping: OpenAI tools -> Claude Code tools
 	allowedToolNames := make(map[string]struct{})
@@ -489,6 +491,10 @@ func convertOpenAIRequestToClaude(modelName string, inputRawJSON []byte, stream,
 		} else if gjson.GetBytes(out, "tools").Exists() {
 			out, _ = sjson.SetRawBytes(out, "tool_choice", []byte(`{"type":"auto","disable_parallel_tool_use":true}`))
 		}
+	}
+
+	if len(messageBlocks) > 0 {
+		out = common.SetRawArrayItems(out, "messages", messageBlocks)
 	}
 
 	return thinking.ApplyTranslatedSummaryToClaude(out, rawJSON, "openai", modelName), nothingLeftErr

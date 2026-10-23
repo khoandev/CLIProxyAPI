@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,18 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
+)
+
+const (
+	// codexWebsocketSessionStoreMaxSessions bounds the number of upstream
+	// execution sessions kept per store. The session ID comes from the client,
+	// so the number of sessions is client controlled.
+	codexWebsocketSessionStoreMaxSessions = 64
+
+	// codexWebsocketSessionIdleTTL is how long a session may stay idle before
+	// it is closed and dropped. The upstream connection already dies after the
+	// idle read deadline, so the sweep only reclaims the map entry.
+	codexWebsocketSessionIdleTTL = 2 * time.Hour
 )
 
 type codexWebsocketSessionStore struct {
@@ -51,6 +64,10 @@ func (c *websocketConnectionCloser) Close() error {
 
 type codexWebsocketSession struct {
 	sessionID string
+
+	// lastUsed tracks the last time the session was fetched from the store.
+	// It is guarded by the store mutex.
+	lastUsed time.Time
 
 	reqMu sync.Mutex
 
@@ -182,6 +199,18 @@ func (s *codexWebsocketSession) activeForConn(conn *websocket.Conn) (chan codexW
 		return nil, nil
 	}
 	return s.activeCh, s.activeDone
+}
+
+// hasActiveRequest reports whether the session currently serves a request.
+// Such a session must not be evicted, because the upstream connection is in
+// use.
+func (s *codexWebsocketSession) hasActiveRequest() bool {
+	if s == nil {
+		return false
+	}
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	return s.activeConn != nil || s.activeCh != nil
 }
 
 func clearRetryActiveState(sess *codexWebsocketSession, conn *websocket.Conn, ch chan codexWebsocketRead) bool {
@@ -660,19 +689,115 @@ func (e *CodexWebsocketsExecutor) getOrCreateSession(sessionID string) *codexWeb
 		store = globalCodexWebsocketSessionStore
 	}
 	store.mu.Lock()
-	defer store.mu.Unlock()
 	if store.sessions == nil {
 		store.sessions = make(map[string]*codexWebsocketSession)
 	}
 	if sess, ok := store.sessions[sessionID]; ok && sess != nil {
+		sess.lastUsed = time.Now()
+		store.mu.Unlock()
+		store.evictExcessSessions()
 		return sess
 	}
 	sess := &codexWebsocketSession{
 		sessionID:            sessionID,
 		upstreamDisconnectCh: make(chan error, 1),
+		lastUsed:             time.Now(),
 	}
 	store.sessions[sessionID] = sess
+	store.mu.Unlock()
+
+	store.evictExcessSessions()
 	return sess
+}
+
+// removeSession drops a session from the store when it is still the same
+// instance, and reports whether it was removed.
+func (s *codexWebsocketSessionStore) removeSession(sessionID string, sess *codexWebsocketSession) bool {
+	if s == nil || sess == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.sessions[sessionID]
+	if !ok || current != sess {
+		return false
+	}
+	delete(s.sessions, sessionID)
+	return true
+}
+
+// evictExcessSessions closes and drops the sessions that exceed the store
+// bounds: every session that stayed idle for too long, and the least recently
+// used idle session when the store holds too many sessions.
+//
+// A session that currently serves a request is never evicted.
+func (s *codexWebsocketSessionStore) evictExcessSessions() {
+	if s == nil {
+		return
+	}
+	now := time.Now()
+
+	// The idle sweep runs on every request, so it must not allocate in the
+	// common case where no session is idle.
+	var expired []*codexWebsocketSession
+	s.mu.Lock()
+	for id, sess := range s.sessions {
+		if sess == nil {
+			delete(s.sessions, id)
+			continue
+		}
+		if now.Sub(sess.lastUsed) > codexWebsocketSessionIdleTTL {
+			delete(s.sessions, id)
+			expired = append(expired, sess)
+		}
+	}
+	count := len(s.sessions)
+	s.mu.Unlock()
+	closeCodexWebsocketSessions(expired, "session_idle")
+
+	if count <= codexWebsocketSessionStoreMaxSessions {
+		return
+	}
+
+	type sessionEntry struct {
+		sessionID string
+		sess      *codexWebsocketSession
+		lastUsed  time.Time
+	}
+	s.mu.Lock()
+	entries := make([]sessionEntry, 0, len(s.sessions))
+	for id, sess := range s.sessions {
+		if sess == nil {
+			continue
+		}
+		entries = append(entries, sessionEntry{sessionID: id, sess: sess, lastUsed: sess.lastUsed})
+	}
+	s.mu.Unlock()
+
+	var evicted []*codexWebsocketSession
+	slices.SortFunc(entries, func(a, b sessionEntry) int {
+		return a.lastUsed.Compare(b.lastUsed)
+	})
+	for i := range entries {
+		if count <= codexWebsocketSessionStoreMaxSessions {
+			break
+		}
+		if entries[i].sess.hasActiveRequest() {
+			continue
+		}
+		if s.removeSession(entries[i].sessionID, entries[i].sess) {
+			evicted = append(evicted, entries[i].sess)
+			count--
+		}
+	}
+	closeCodexWebsocketSessions(evicted, "session_evicted")
+}
+
+// closeCodexWebsocketSessions closes the given sessions with a reason.
+func closeCodexWebsocketSessions(sessions []*codexWebsocketSession, reason string) {
+	for i := range sessions {
+		closeCodexWebsocketSession(sessions[i], reason)
+	}
 }
 
 func (e *CodexWebsocketsExecutor) UpstreamDisconnectChan(sessionID string) <-chan error {

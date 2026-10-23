@@ -202,6 +202,8 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 
 	// Extract betas from body and convert to header
 	var extraBetas []string
+	extraBetas, body = extractAndRemoveBetas(body)
+	body, extraBetas = stripClaudeFastModeIfDisabled(e.cfg, body, extraBetas)
 	bodyForTranslation := body
 	bodyForUpstream := body
 	var oauthToolNamesReverseMap map[string]string
@@ -246,6 +248,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		diagnosticsState = claudeDiagnosticsRequestState{}
 	}
 	extraBetas, bodyForUpstream = extractAndRemoveBetas(bodyForUpstream)
+	bodyForUpstream, extraBetas = stripClaudeFastModeIfDisabled(e.cfg, bodyForUpstream, extraBetas)
 	bodyForUpstream = stripPromptCacheOptions(bodyForUpstream)
 	if cchSigning {
 		bodyForUpstream, err = signAnthropicMessagesBody(bodyForUpstream)
@@ -338,6 +341,38 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			log.Errorf("response body close error: %v", errClose)
 		}
 		return nil, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, err)
+	}
+	// Peek available bytes to detect HTML pages returned as 2xx by CDN/gateways.
+	// Avoid blocking if fewer than 512 bytes are immediately buffered.
+	{
+		peek := bufio.NewReaderSize(decodedBody, 512)
+		n := peek.Buffered()
+		if n == 0 {
+			// Read up to 512 bytes non-blocking or first available chunk
+			if p, errPeek := peek.Peek(min(512, max(1, peek.Buffered()))); errPeek == nil && len(p) > 0 {
+				if bodyErr := helps.DetectUpstreamErrorBody(httpResp.StatusCode, p); bodyErr != nil {
+					if errClose := decodedBody.Close(); errClose != nil {
+						log.Errorf("response body close error: %v", errClose)
+					}
+					helps.RecordAPIResponseError(ctx, e.cfg, bodyErr)
+					return nil, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, bodyErr)
+				}
+			}
+		} else {
+			if p, _ := peek.Peek(min(512, n)); len(p) > 0 {
+				if bodyErr := helps.DetectUpstreamErrorBody(httpResp.StatusCode, p); bodyErr != nil {
+					if errClose := decodedBody.Close(); errClose != nil {
+						log.Errorf("response body close error: %v", errClose)
+					}
+					helps.RecordAPIResponseError(ctx, e.cfg, bodyErr)
+					return nil, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, bodyErr)
+				}
+			}
+		}
+		decodedBody = struct {
+			io.Reader
+			io.Closer
+		}{peek, decodedBody}
 	}
 	out := make(chan cliproxyexecutor.StreamChunk, 1)
 	go func() {

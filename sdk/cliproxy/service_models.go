@@ -858,16 +858,14 @@ func buildOpenAICompatibilityConfigModels(compat *config.OpenAICompatibility) []
 	models := make([]*ModelInfo, 0, len(compat.Models))
 	for i := range compat.Models {
 		model := compat.Models[i]
-		modelType := "openai-compatibility"
-		if model.Image {
-			modelType = registry.OpenAIImageModelType
-		}
-		info := buildConfiguredModelInfo(model, compat.Name, modelType, now, strings.TrimSpace(model.Alias), false)
+		// All openai-compatibility models default to type "openai-compatibility".
+		// The Image flag is no longer used to change the type; use ImageDisabled/VideoDisabled instead.
+		info := buildConfiguredModelInfo(model, compat.Name, "openai-compatibility", now, strings.TrimSpace(model.Alias), false)
 		if info == nil {
 			continue
 		}
 		thinkingSupport := model.Thinking
-		if thinkingSupport == nil && !model.Image {
+		if thinkingSupport == nil {
 			thinkingSupport = &registry.ThinkingSupport{Levels: []string{"low", "medium", "high"}}
 		}
 		if model.Thinking != nil {
@@ -879,6 +877,8 @@ func buildOpenAICompatibilityConfigModels(compat *config.OpenAICompatibility) []
 		info.Thinking = modelconfig.NormalizeThinkingSupport(thinkingSupport)
 		info.SupportedInputModalities = normalizeCompatConfigModalities(model.InputModalities)
 		info.SupportedOutputModalities = normalizeCompatConfigModalities(model.OutputModalities)
+		info.ImageDisabled = !model.ImageEnabled()
+		info.VideoDisabled = !model.VideoEnabled()
 		models = append(models, info)
 	}
 	return models

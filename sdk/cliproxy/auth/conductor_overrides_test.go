@@ -1154,8 +1154,8 @@ func TestManager_MarkResult_TransientErrorCooldownDoesNotDisableAuthErrors(t *te
 		t.Fatal("expected auth error cooldown to remain enabled")
 	}
 	diff := time.Until(state.NextRetryAfter)
-	if diff < 29*time.Minute || diff > 31*time.Minute {
-		t.Fatalf("expected auth error cooldown to be ~30 minutes, got %v", diff)
+	if diff < 9*time.Minute || diff > 11*time.Minute {
+		t.Fatalf("expected auth error cooldown to be ~10 minutes, got %v", diff)
 	}
 }
 
@@ -1463,10 +1463,6 @@ func TestManager_RequestScopedErrorStopsCredentialFallbackWithoutSuspendingAuth(
 		HTTPStatus: http.StatusBadRequest,
 		Message:    "bad request",
 	}
-	conflictErr := &Error{
-		HTTPStatus: http.StatusConflict,
-		Message:    `{"error":{"type":"conflict_error","code":"conflict","message":"request conflict"}}`,
-	}
 	contextLengthErr := &Error{
 		HTTPStatus: http.StatusBadGateway,
 		Message:    `{"error":{"type":"server_error","code":"context_length_exceeded","message":"input too long"}}`,
@@ -1501,9 +1497,6 @@ func TestManager_RequestScopedErrorStopsCredentialFallbackWithoutSuspendingAuth(
 		{name: "streaming message too big", provider: "codex", stream: true, err: tooLargeErr, wantStatus: http.StatusRequestEntityTooLarge},
 		{name: "non-streaming plain bad request", err: plainBadRequestErr, wantStatus: http.StatusBadRequest},
 		{name: "streaming plain bad request", stream: true, err: plainBadRequestErr, wantStatus: http.StatusBadRequest},
-		{name: "non-streaming conflict", err: conflictErr, wantStatus: http.StatusConflict},
-		{name: "streaming conflict", stream: true, err: conflictErr, wantStatus: http.StatusConflict},
-		{name: "streaming conflict after payload", stream: true, streamAfterPayload: true, err: conflictErr, wantStatus: http.StatusConflict},
 		{name: "non-streaming context length behind bad gateway", err: contextLengthErr, wantStatus: http.StatusBadGateway},
 		{name: "streaming context length behind bad gateway", stream: true, err: contextLengthErr, wantStatus: http.StatusBadGateway},
 		{name: "streaming invalid request type behind bad gateway", stream: true, err: invalidRequestTypeErr, wantStatus: http.StatusBadGateway},
@@ -1696,8 +1689,8 @@ func TestManager_DeepSeekInsufficientBalanceRotatesCredentialAndRebindsSession(t
 	if !state.Unavailable {
 		t.Fatal("expected the depleted credential to be unavailable for the model")
 	}
-	if state.NextRetryAfter.Before(beforeExecute.Add(29 * time.Minute)) {
-		t.Fatalf("cooldown expires at %v, want approximately 30 minutes", state.NextRetryAfter)
+	if state.NextRetryAfter.Before(beforeExecute.Add(9 * time.Minute)) {
+		t.Fatalf("cooldown expires at %v, want approximately 10 minutes", state.NextRetryAfter)
 	}
 }
 

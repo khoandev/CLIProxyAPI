@@ -101,28 +101,59 @@ func validHomeInFlightPublisherBounds(cfg HomeInFlightPublisherConfig) bool {
 		cfg.MaxAggregateGroups > 0 && cfg.MaxDetails >= 0 && cfg.MaxStringBytes > 0
 }
 
+// homeInFlightTicker abstracts the publisher wait cycle so tests drive timer
+// cycles explicitly instead of relying on wall-clock granularity.
+type homeInFlightTicker interface {
+	C() <-chan time.Time
+	Reset(d time.Duration)
+	Stop()
+}
+
+type homeInFlightTimer struct {
+	timer *time.Timer
+}
+
+func (t *homeInFlightTimer) C() <-chan time.Time { return t.timer.C }
+
+// ponytail: Reset result unused; the loop drains C before every reset, so no stale tick survives.
+func (t *homeInFlightTimer) Reset(d time.Duration) { t.timer.Reset(d) }
+func (t *homeInFlightTimer) Stop()                 { t.timer.Stop() }
+
 // StartHomeInFlightPublisher publishes periodic snapshots for the supplied lifetime registry.
 func (m *Manager) StartHomeInFlightPublisher(ctx context.Context, transport HomeInFlightTransport, registry *executionregistry.Registry) {
+	m.startHomeInFlightPublisher(ctx, transport, registry, func(d time.Duration) homeInFlightTicker {
+		return &homeInFlightTimer{timer: time.NewTimer(d)}
+	})
+}
+
+// startHomeInFlightPublisher runs the publish loop. newTicker is a seam so
+// tests drive timer cycles explicitly instead of wall-clock sleeps.
+func (m *Manager) startHomeInFlightPublisher(ctx context.Context, transport HomeInFlightTransport, registry *executionregistry.Registry, newTicker func(time.Duration) homeInFlightTicker) {
 	if m == nil || transport == nil || registry == nil {
 		return
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if newTicker == nil {
+		newTicker = func(d time.Duration) homeInFlightTicker {
+			return &homeInFlightTimer{timer: time.NewTimer(d)}
+		}
+	}
 
-	timer := time.NewTimer(0)
-	defer timer.Stop()
+	ticker := newTicker(0)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case observedAt := <-timer.C:
+		case observedAt := <-ticker.C():
 			cfg := m.HomeInFlightPublisherConfig()
 			interval := cfg.SnapshotInterval
 			if interval <= 0 {
 				interval = 2 * time.Second
 			}
-			timer.Reset(interval)
+			ticker.Reset(interval)
 			if !transport.HeartbeatOK() {
 				continue
 			}

@@ -18,17 +18,32 @@ import "bytes"
 // the raw bytes is absent from every decoded string too. If such an escape is
 // present the function answers true and the caller falls back to its full
 // walk, so the result never changes, only the cost.
+//
+// A needle longer than eight bytes is searched for by its first eight bytes
+// only. The search for a longer needle is markedly slower, and a body that
+// holds the whole needle always holds that prefix, so the answer only ever
+// becomes more cautious: a caller that skips a walk it would otherwise have
+// performed still skips it only when the needle is truly absent.
 func jsonMayContainASCII(body []byte, needles ...string) bool {
 	if hasPrintableASCIIUnicodeEscape(body) {
 		return true
 	}
 	for _, needle := range needles {
-		if bytes.Contains(body, []byte(needle)) {
+		prefix := needle
+		if len(prefix) > jsonPrefilterNeedleSearchLimit {
+			prefix = prefix[:jsonPrefilterNeedleSearchLimit]
+		}
+		if bytes.Contains(body, []byte(prefix)) {
 			return true
 		}
 	}
 	return false
 }
+
+// jsonPrefilterNeedleSearchLimit is the number of leading needle bytes that
+// are searched for. Go searches a needle of at most this length considerably
+// faster than a longer one.
+const jsonPrefilterNeedleSearchLimit = 8
 
 // hasPrintableASCIIUnicodeEscape reports whether body contains a \u00XX
 // escape whose first hex digit is 2-7, i.e. a printable ASCII character. It

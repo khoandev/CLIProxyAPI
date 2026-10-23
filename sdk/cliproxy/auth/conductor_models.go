@@ -53,6 +53,19 @@ func isAPIKeyAuth(auth *Auth) bool {
 	return auth.AuthKind() == AuthKindAPIKey
 }
 
+func isOpenAICompatAPIKeyAuth(auth *Auth) bool {
+	if !isAPIKeyAuth(auth) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(auth.Provider), "openai-compatibility") {
+		return true
+	}
+	if auth.Attributes == nil {
+		return false
+	}
+	return strings.TrimSpace(auth.Attributes["compat_name"]) != ""
+}
+
 func isConfiguredOpenAICompatAuth(auth *Auth) bool {
 	if !isConfiguredModelRoutingAuth(auth) {
 		return false
@@ -154,6 +167,15 @@ func resolveOpenAICompatUpstreamModelPool(cfg *internalconfig.Config, auth *Auth
 	if entry == nil {
 		return nil
 	}
+	// A "model:effort" request resolves through the alias pool on the base model,
+	// then carries the reasoning effort back onto every upstream candidate.
+	if baseModel, effort, ok := ResolveOpenAICompatColonEffortModel(cfg, auth, requestedModel); ok {
+		pool := resolveModelAliasPoolFromConfigModels(baseModel, asModelAliasEntries(entry.Models))
+		for i := range pool {
+			pool[i] = strings.TrimSpace(pool[i]) + ":" + effort
+		}
+		return pool
+	}
 	return resolveModelAliasPoolFromConfigModels(requestedModel, asModelAliasEntries(entry.Models))
 }
 
@@ -205,6 +227,12 @@ func (m *Manager) selectionModelForAuth(auth *Auth, routeModel string) string {
 	requestedModel := rewriteModelForAuth(routeModel, auth)
 	if strings.TrimSpace(requestedModel) == "" {
 		requestedModel = strings.TrimSpace(routeModel)
+	}
+	if isOpenAICompatAPIKeyAuth(auth) {
+		cfg, _ := m.runtimeConfig.Load().(*internalconfig.Config)
+		if baseModel, _, ok := ResolveOpenAICompatColonEffortModel(cfg, auth, requestedModel); ok {
+			requestedModel = baseModel
+		}
 	}
 	resolvedModel := m.applyOAuthModelAlias(auth, requestedModel)
 	if strings.TrimSpace(resolvedModel) == "" {

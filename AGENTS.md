@@ -61,3 +61,11 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - Avoid wall-clock `time.Sleep` in TTL, expiration, ordering, or cache-eviction unit tests due to platform timer granularity (e.g. Windows default timer resolution of ~15.6ms) and CI jitter under load; prefer controllable clocks (`nowFunc` / mock clock), explicit timestamp manipulation, or deterministic synchronization primitives.
 - Note: if modifying features that involve CLIProxyAPIHome, check if corresponding updates are needed in the CLIProxyAPIHome repository.
 - Endpoints under the `/v0/management` base URL are deprecated and no longer maintained. For any feature changes, do not modify endpoints under `/v0/management` unless necessary to fix compilation errors.
+
+## Endpoint Coverage (never drop support)
+- This proxy must support every endpoint its handlers register, across all provider families: OpenAI (`/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/responses/compact`, `/v1/embeddings`, `/v1/images/*`, `/v1/videos/*`, `/v1/search`, `/v1/files/*`, `/v1/ppt/generations`, `/v1/psd/generations`, `/v1/editable-file-tasks`), Anthropic (`/v1/messages`), Gemini (`/v1beta/models/*`), and Codex live/websocket routes.
+- Never delete, rename, or silently repoint a registered route, a handler, an executor endpoint-mapping branch, or a per-provider protocol/endpoint resolver. Merges that "reset" a file to upstream must be treated as regressions, not cleanup.
+- When resolving conflicts, keep the union: all endpoint mappings, all capability flags, and all retry/fallback paths that existed before the merge.
+- If a change makes an endpoint unreachable for some provider (e.g. hardcoding a single upstream path so only chat works), that is a bug. Endpoint selection must derive from the incoming request path, not a constant.
+- After any merge or executor restore, verify with `go build ./...` **and** `go test ./...`. The executor package's tests assert endpoint mapping; a build failure or a failing test there means an endpoint capability was dropped.
+

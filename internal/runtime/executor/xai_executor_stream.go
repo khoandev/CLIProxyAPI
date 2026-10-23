@@ -72,6 +72,37 @@ func (e *XAIExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth
 		return nil, xaiStatusErr(httpResp.StatusCode, data)
 	}
 
+	// Peek available bytes to detect HTML pages returned as 2xx by CDN/gateways.
+	// Avoid blocking if fewer than 512 bytes are immediately buffered.
+	{
+		peek := bufio.NewReaderSize(httpResp.Body, 512)
+		n := peek.Buffered()
+		if n == 0 {
+			if p, errPeek := peek.Peek(min(512, max(1, peek.Buffered()))); errPeek == nil && len(p) > 0 {
+				if bodyErr := helps.DetectUpstreamErrorBody(httpResp.StatusCode, p); bodyErr != nil {
+					if errClose := httpResp.Body.Close(); errClose != nil {
+						log.Errorf("xai executor: close response body error: %v", errClose)
+					}
+					helps.RecordAPIResponseError(ctx, e.cfg, bodyErr)
+					return nil, bodyErr
+				}
+			}
+		} else {
+			if p, _ := peek.Peek(min(512, n)); len(p) > 0 {
+				if bodyErr := helps.DetectUpstreamErrorBody(httpResp.StatusCode, p); bodyErr != nil {
+					if errClose := httpResp.Body.Close(); errClose != nil {
+						log.Errorf("xai executor: close response body error: %v", errClose)
+					}
+					helps.RecordAPIResponseError(ctx, e.cfg, bodyErr)
+					return nil, bodyErr
+				}
+			}
+		}
+		httpResp.Body = struct {
+			io.Reader
+			io.Closer
+		}{peek, httpResp.Body}
+	}
 	out := make(chan cliproxyexecutor.StreamChunk)
 	go func() {
 		defer close(out)

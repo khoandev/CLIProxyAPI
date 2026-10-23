@@ -37,7 +37,7 @@ func TestManager_MarkResult_CredentialScopeKeepsLongerSiblingDeadline(t *testing
 
 	m, auth := newCooldownMonotonicManager(t, "model-a", "model-b")
 
-	// Long per-model deadline on model-b: a 401 (~30m) or 404 (12h).
+	// Long per-model deadline on model-b: a 401 (~10m) or 404 (12h).
 	m.MarkResult(context.Background(), Result{
 		AuthID: auth.ID, Provider: auth.Provider, Model: "model-b",
 		Success: false, Error: &Error{HTTPStatus: http.StatusUnauthorized, Message: "long 401"},
@@ -45,7 +45,7 @@ func TestManager_MarkResult_CredentialScopeKeepsLongerSiblingDeadline(t *testing
 	before := time.Now()
 	sibling, _ := m.GetByID(auth.ID)
 	bState := existingModelState(sibling, canonicalModelKey("model-b"))
-	if bState == nil || bState.NextRetryAfter.Before(before.Add(25*time.Minute)) {
+	if bState == nil || bState.NextRetryAfter.Before(before.Add(5*time.Minute)) {
 		t.Fatalf("precondition failed: model-b long deadline missing: %+v", bState)
 	}
 
@@ -62,18 +62,18 @@ func TestManager_MarkResult_CredentialScopeKeepsLongerSiblingDeadline(t *testing
 	if bStateAfter == nil {
 		t.Fatal("model-b state missing after sibling failure")
 	}
-	if bStateAfter.NextRetryAfter.Before(before.Add(25 * time.Minute)) {
+	if bStateAfter.NextRetryAfter.Before(before.Add(5 * time.Minute)) {
 		t.Fatalf("credential-scoped failure shortened model-b deadline to %v", bStateAfter.NextRetryAfter.Sub(before))
 	}
 
-	// Model A should only be blocked for the 5-minute credential quota, not elevated to Model B's 30m deadline.
+	// Model A should only be blocked for the 5-minute credential quota, not elevated to Model B's 10m deadline.
 	blockedA, _, _ := isAuthBlockedForModel(updated, "model-a", before.Add(6*time.Minute))
 	if blockedA {
 		t.Fatalf("model-a should have unblocked after its 5m credential quota, but is still blocked")
 	}
 	blockedB, _, _ := isAuthBlockedForModel(updated, "model-b", before.Add(6*time.Minute))
 	if !blockedB {
-		t.Fatalf("model-b should still be blocked after 6 minutes due to its 30m deadline")
+		t.Fatalf("model-b should still be blocked after 6 minutes due to its 10m deadline")
 	}
 }
 
@@ -188,7 +188,7 @@ func TestManager_MarkResult_LaterShorterFailureKeepsLongerModelDeadline(t *testi
 			before := time.Now()
 			snap, _ := m.GetByID(auth.ID)
 			state := existingModelState(snap, canonicalModelKey("model-a"))
-			if state == nil || state.NextRetryAfter.Before(before.Add(25*time.Minute)) {
+			if state == nil || state.NextRetryAfter.Before(before.Add(5*time.Minute)) {
 				t.Fatalf("precondition failed: 401 deadline missing: %+v", state)
 			}
 
@@ -199,7 +199,7 @@ func TestManager_MarkResult_LaterShorterFailureKeepsLongerModelDeadline(t *testi
 			if stateAfter == nil {
 				t.Fatal("model state missing after second writer")
 			}
-			if stateAfter.NextRetryAfter.Before(before.Add(25 * time.Minute)) {
+			if stateAfter.NextRetryAfter.Before(before.Add(5 * time.Minute)) {
 				t.Fatalf("second writer shortened live deadline to %v", stateAfter.NextRetryAfter.Sub(before))
 			}
 		})
@@ -222,7 +222,7 @@ func TestManager_ClientModelProjection_ReflectsAuthLevelCooldown(t *testing.T) {
 	})
 
 	snap, _ := m.GetByID(auth.ID)
-	if !snap.Unavailable || snap.NextRetryAfter.Before(time.Now().Add(25*time.Minute)) {
+	if !snap.Unavailable || snap.NextRetryAfter.Before(time.Now().Add(5*time.Minute)) {
 		t.Fatalf("precondition failed: expected live auth-level cooldown, got Unavailable=%v NextRetryAfter=%v", snap.Unavailable, snap.NextRetryAfter)
 	}
 

@@ -284,7 +284,7 @@ func (r *Registry) TranslateStream(ctx context.Context, from, to Format, model s
 			outputs[i] = hooks.NormalizeResponseAfter(ctx, from, to, model, originalRequestRawJSON, requestRawJSON, output, true)
 		}
 	}
-	return outputs
+	return applyCacheHitCostRatioToStream(outputs, to)
 }
 
 // TranslateNonStream applies the registered non-stream response translator.
@@ -314,7 +314,7 @@ func (r *Registry) TranslateNonStream(ctx context.Context, from, to Format, mode
 	if hooks != nil {
 		body = hooks.NormalizeResponseAfter(ctx, from, to, model, originalRequestRawJSON, requestRawJSON, body, false)
 	}
-	return body
+	return applyCacheHitCostRatio(body, to)
 }
 
 // translationToolInputFailed consumes only the optional, request-local error contract.

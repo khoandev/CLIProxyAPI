@@ -325,7 +325,7 @@ func TestRequestLoggingMiddleware_StreamingResponsesUpstreamSections(t *testing.
 	}
 }
 
-func TestAttachRequestLogSourcesUsesLoggerLogsDir(t *testing.T) {
+func TestAttachRequestLogSourcesKeepsSmallPartsInMemory(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	logsDir := t.TempDir()
@@ -350,17 +350,72 @@ func TestAttachRequestLogSourcesUsesLoggerLogsDir(t *testing.T) {
 		if !ok || source == nil {
 			t.Fatalf("%s source type = %T", key, value)
 		}
-		file, errPart := source.CreatePart("probe")
+		writer, errPart := source.CreatePart("probe")
 		if errPart != nil {
 			t.Fatalf("CreatePart(%s): %v", key, errPart)
 		}
-		path := file.Name()
-		if errClose := file.Close(); errClose != nil {
+		if _, errWrite := writer.Write([]byte("probe")); errWrite != nil {
+			t.Fatalf("write part (%s): %v", key, errWrite)
+		}
+		if errClose := writer.Close(); errClose != nil {
 			t.Fatalf("close part: %v", errClose)
 		}
-		if !strings.HasPrefix(path, logsDir+string(os.PathSeparator)) {
-			t.Fatalf("%s part path %s is not under logs dir %s", key, path, logsDir)
+		payload, errBytes := source.Bytes()
+		if errBytes != nil {
+			t.Fatalf("Bytes(%s): %v", key, errBytes)
 		}
+		if string(payload) != "probe" {
+			t.Fatalf("%s part payload = %q, want %q", key, string(payload), "probe")
+		}
+	}
+
+	entries, errRead := os.ReadDir(logsDir)
+	if errRead != nil {
+		t.Fatalf("read logs dir: %v", errRead)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("logs dir entries = %d, want 0 for in-memory parts", len(entries))
+	}
+}
+
+func TestDeferredRequestBodyCaptureBuffersBodyWithoutFiles(t *testing.T) {
+	logsDir := t.TempDir()
+	body := `{"model":"claude-haiku-4-5","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	info := &RequestInfo{}
+	capture := attachDeferredRequestBodyCapture(req, logging.NewFileRequestLogger(false, logsDir, "", 0), info, false, false)
+	if capture == nil {
+		t.Fatal("expected deferred body capture")
+	}
+	defer capture.Cleanup()
+
+	drained, errRead := io.ReadAll(req.Body)
+	if errRead != nil {
+		t.Fatalf("drain captured body: %v", errRead)
+	}
+	if string(drained) != body {
+		t.Fatalf("downstream body = %q, want %q", string(drained), body)
+	}
+
+	captured, marker, errBytes := capture.Bytes()
+	if errBytes != nil {
+		t.Fatalf("capture.Bytes: %v", errBytes)
+	}
+	if string(captured) != body {
+		t.Fatalf("captured body = %q, want %q", string(captured), body)
+	}
+	if marker != "" {
+		t.Fatalf("status marker = %q, want empty", marker)
+	}
+
+	entries, errEntries := os.ReadDir(logsDir)
+	if errEntries != nil {
+		t.Fatalf("read logs dir: %v", errEntries)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("logs dir entries = %d, want 0 for in-memory capture", len(entries))
 	}
 }
 

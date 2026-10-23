@@ -367,9 +367,13 @@ func newTestWebRTCAPI(t *testing.T) *webrtc.API {
 	if errRegister := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); errRegister != nil {
 		t.Fatalf("register test interceptors: %v", errRegister)
 	}
+	// ponytail: include loopback candidates so local test peers can always pair.
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetIncludeLoopbackCandidate(true)
 	return webrtc.NewAPI(
 		webrtc.WithMediaEngine(mediaEngine),
 		webrtc.WithInterceptorRegistry(interceptorRegistry),
+		webrtc.WithSettingEngine(settingEngine),
 	)
 }
 

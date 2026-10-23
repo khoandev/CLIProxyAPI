@@ -106,6 +106,21 @@ func TestIsAIAPIPathIncludesImages(t *testing.T) {
 	if !isAIAPIPath("/openai/v1/videos/video_123/content") {
 		t.Fatalf("expected /openai/v1/videos/video_123/content to be treated as AI API path")
 	}
+	if !isAIAPIPath("/v1/search") {
+		t.Fatalf("expected /v1/search to be treated as AI API path")
+	}
+	if !isAIAPIPath("/v1/ppt/generations") {
+		t.Fatalf("expected /v1/ppt/generations to be treated as AI API path")
+	}
+	if !isAIAPIPath("/v1/psd/generations") {
+		t.Fatalf("expected /v1/psd/generations to be treated as AI API path")
+	}
+	if !isAIAPIPath("/v1/editable-file-tasks") {
+		t.Fatalf("expected /v1/editable-file-tasks to be treated as AI API path")
+	}
+	if !isAIAPIPath("/files/output.png") {
+		t.Fatalf("expected /files/output.png to be treated as AI API path")
+	}
 }
 
 func TestIsAIAPIPathIncludesCodexBackend(t *testing.T) {

@@ -17,6 +17,15 @@ import (
 const (
 	defaultClaudeWebSearchResultTTL   = 24 * time.Hour
 	defaultClaudeWebSearchResultLimit = 1024
+
+	// claudeWebSearchResultMaxEntryBytes bounds one cached web search result
+	// block. The block content is an arbitrary size, so the entry count limit
+	// alone does not bound the memory the cache uses.
+	claudeWebSearchResultMaxEntryBytes = 4 << 20
+
+	// claudeWebSearchResultMaxTotalBytes bounds the aggregate cached web
+	// search result content.
+	claudeWebSearchResultMaxTotalBytes = 32 << 20
 )
 
 type claudeWebSearchResultEntry struct {
@@ -31,6 +40,9 @@ var (
 	claudeWebSearchResultIndex = make(map[string]*list.Element)
 	claudeWebSearchResultOrder = list.New()
 	claudeWebSearchResultNow   = time.Now
+	// claudeWebSearchResultTotalBytes tracks the cached content size so the
+	// cache can be bounded by bytes as well as by entry count.
+	claudeWebSearchResultTotalBytes int64
 )
 
 type claudeWebSearchResultKVClient interface {
@@ -96,6 +108,10 @@ func CacheClaudeWebSearchResultBestEffort(ctx context.Context, sessionKey, toolU
 	if limit <= 0 {
 		limit = defaultClaudeWebSearchResultLimit
 	}
+	if len(content) > claudeWebSearchResultMaxEntryBytes {
+		// The block is too large to keep without endangering the host.
+		return false
+	}
 	cacheCleanupOnce.Do(startCacheCleanup)
 
 	claudeWebSearchResultMu.Lock()
@@ -115,7 +131,8 @@ func CacheClaudeWebSearchResultBestEffort(ctx context.Context, sessionKey, toolU
 		expiresAt: now.Add(ttl),
 	}
 	claudeWebSearchResultIndex[key] = claudeWebSearchResultOrder.PushFront(entry)
-	for claudeWebSearchResultOrder.Len() > limit {
+	claudeWebSearchResultTotalBytes += int64(len(entry.content))
+	for claudeWebSearchResultOrder.Len() > limit || claudeWebSearchResultTotalBytes > claudeWebSearchResultMaxTotalBytes {
 		oldest := claudeWebSearchResultOrder.Back()
 		if oldest == nil {
 			break
@@ -195,6 +212,7 @@ func ClearClaudeWebSearchResultCache() {
 	defer claudeWebSearchResultMu.Unlock()
 	claudeWebSearchResultIndex = make(map[string]*list.Element)
 	claudeWebSearchResultOrder.Init()
+	claudeWebSearchResultTotalBytes = 0
 }
 
 func purgeExpiredClaudeWebSearchResultCache(now time.Time) {
@@ -218,4 +236,8 @@ func removeClaudeWebSearchResultLocked(element *list.Element) {
 	entry := element.Value.(*claudeWebSearchResultEntry)
 	delete(claudeWebSearchResultIndex, entry.key)
 	claudeWebSearchResultOrder.Remove(element)
+	claudeWebSearchResultTotalBytes -= int64(len(entry.content))
+	if claudeWebSearchResultTotalBytes < 0 {
+		claudeWebSearchResultTotalBytes = 0
+	}
 }

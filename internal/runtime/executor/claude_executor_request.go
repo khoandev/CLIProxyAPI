@@ -607,6 +607,49 @@ func claudeRequestUsesFastMode(body []byte, requested map[string]bool) bool {
 	return speed.Type == gjson.String && strings.EqualFold(strings.TrimSpace(speed.String()), "fast")
 }
 
+// stripFastModeBetaFromBetaString removes the fast-mode-2026-02-01 beta from a
+// comma-separated beta string, preserving the order of all other entries.
+func stripFastModeBetaFromBetaString(betas string) string {
+	if !strings.Contains(betas, claudeFastModeBeta) {
+		return betas
+	}
+	parts := strings.Split(betas, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		if strings.TrimSpace(p) != claudeFastModeBeta {
+			out = append(out, p)
+		}
+	}
+	return strings.TrimSpace(strings.Join(out, ","))
+}
+
+// stripClaudeFastModeIfDisabled removes all fast-mode signals from the body and
+// extraBetas when fast-service-tier is disabled in the configuration. It strips
+// the speed field from the body and removes the fast-mode-2026-02-01 beta from
+// extraBetas, so downstream header construction and fast-request detection both
+// see a request that never asked for fast mode.
+//
+// The Anthropic-Beta header path (incomingBetas) is handled separately inside
+// applyClaudeHeadersWithNativeProfile, where incomingBetas is computed.
+func stripClaudeFastModeIfDisabled(cfg *config.Config, body []byte, extraBetas []string) ([]byte, []string) {
+	if cfg == nil || cfg.FastServiceTier {
+		return body, extraBetas
+	}
+	// Strip speed field if it is "fast".
+	if speed := gjson.GetBytes(body, "speed"); speed.Type == gjson.String &&
+		strings.EqualFold(strings.TrimSpace(speed.String()), "fast") {
+		body, _ = sjson.DeleteBytes(body, "speed")
+	}
+	// Remove fast-mode-2026-02-01 from extraBetas.
+	filtered := extraBetas[:0:0]
+	for _, b := range extraBetas {
+		if strings.TrimSpace(b) != claudeFastModeBeta {
+			filtered = append(filtered, b)
+		}
+	}
+	return body, filtered
+}
+
 // claudeCountTokensBetas is the fixed profile Claude Code 2.1.220 sends to
 // /v1/messages/count_tokens. It is far smaller than the inference baseline:
 // redact-thinking, thinking-token-count, prompt-caching-scope, effort and every
@@ -1268,6 +1311,9 @@ func applyClaudeHeadersWithNativeProfile(
 	var deviceProfile helps.ClaudeDeviceProfile
 
 	incomingBetas := strings.TrimSpace(strings.Join(helps.HeaderValuesCaseInsensitive(incomingHeaders, "Anthropic-Beta"), ","))
+	if cfg != nil && !cfg.FastServiceTier {
+		incomingBetas = stripFastModeBetaFromBetaString(incomingBetas)
+	}
 	countTokens := r.URL != nil && strings.HasSuffix(r.URL.Path, "/count_tokens")
 	if !confirmedClaudeCode && !wirePolicy.Cloak && wirePolicy.ExplicitNever && !wirePolicy.Uncloak {
 		det := helps.DetectClaudeCodeRequest(incomingHeaders, body, countTokens, cfg)

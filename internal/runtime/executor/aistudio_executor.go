@@ -188,6 +188,10 @@ func (e *AIStudioExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth,
 	if wsResp.Status < 200 || wsResp.Status >= 300 {
 		return resp, statusErr{code: wsResp.Status, msg: string(wsResp.Body)}
 	}
+	if bodyErr := helps.DetectUpstreamErrorBody(wsResp.Status, wsResp.Body); bodyErr != nil {
+		helps.RecordAPIResponseError(ctx, e.cfg, bodyErr)
+		return resp, bodyErr
+	}
 	reporter.ObserveResponseModel(wsResp.Body)
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	var param any

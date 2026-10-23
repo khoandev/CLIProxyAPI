@@ -161,11 +161,11 @@ func TestAttachResolvedAPIKeyModelInfoSupportsKeylessOpenAICompatibility(t *test
 		BaseURL: "https://example.com/v1",
 		Models: []internalconfig.OpenAICompatibilityModel{
 			{
-				Name: "shared-upstream", Alias: "public-model", ForceMapping: true, IsCompat: true,
+				Name: "shared-upstream", Alias: "public-model", ForceMapping: boolPtr(true), IsCompat: true,
 				Thinking: &registry.ThinkingSupport{Levels: []string{"high"}},
 			},
 			{
-				Name: "fallback-upstream", Alias: "public-model",
+				Name: "fallback-upstream", Alias: "public-model", ForceMapping: boolPtr(false),
 				Thinking: &registry.ThinkingSupport{Levels: []string{"high"}},
 			},
 		},

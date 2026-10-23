@@ -453,24 +453,70 @@ func TestHomeInFlightPublisherReplacementStopsOldLifetimeAndPinsDependencies(t *
 	}
 }
 
+type homeInFlightManualTicker struct {
+	fires  chan time.Time
+	resets chan time.Duration
+}
+
+func newHomeInFlightManualTicker() *homeInFlightManualTicker {
+	return &homeInFlightManualTicker{fires: make(chan time.Time, 32), resets: make(chan time.Duration, 32)}
+}
+
+func (t *homeInFlightManualTicker) C() <-chan time.Time { return t.fires }
+func (t *homeInFlightManualTicker) Reset(d time.Duration) {
+	t.resets <- d
+}
+func (t *homeInFlightManualTicker) Stop() {}
+
+// fire delivers one timer cycle without wall-clock waiting.
+func (t *homeInFlightManualTicker) fire() { t.fires <- time.Now() }
+
+func waitForHomeInFlightTickerReset(t *testing.T, resets <-chan time.Duration) time.Duration {
+	t.Helper()
+	select {
+	case reset := <-resets:
+		return reset
+	case <-time.After(5 * time.Second):
+		t.Fatal("publisher did not reset its timer")
+		return 0
+	}
+}
+
 func TestHomeInFlightPublisherAppliesConfigUpdateAtNextTimerCycle(t *testing.T) {
 	manager := NewManager(nil, nil, nil)
 	manager.ApplyHomeInFlightPublisherConfig(homeInFlightPublisherTestConfig(60 * time.Millisecond))
 	transport := newHomeInFlightLifecycleTransport(true)
+	ticker := newHomeInFlightManualTicker()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go manager.StartHomeInFlightPublisher(ctx, transport, executionregistry.New())
-	waitForHomeInFlightPublisherPayload(t, transport.payloads)
+	go manager.startHomeInFlightPublisher(ctx, transport, executionregistry.New(), func(time.Duration) homeInFlightTicker {
+		return ticker
+	})
 
+	// The first driven cycle publishes with the initial interval.
+	ticker.fire()
+	waitForHomeInFlightPublisherPayload(t, transport.payloads)
+	if got := waitForHomeInFlightTickerReset(t, ticker.resets); got != 60*time.Millisecond {
+		t.Fatalf("publisher interval before update = %v, want 60ms", got)
+	}
+
+	// A config update alone must not publish; it applies at the next timer cycle.
 	manager.ApplyHomeInFlightPublisherConfig(homeInFlightPublisherTestConfig(10 * time.Millisecond))
 	select {
 	case published := <-transport.payloads:
-		t.Fatalf("publisher applied hot interval before the next timer cycle at %v", published)
-	case <-time.After(30 * time.Millisecond):
+		t.Fatalf("publisher applied hot interval before the next timer cycle at %v", published.observedAt)
+	default:
 	}
-	second := waitForHomeInFlightPublisherPayload(t, transport.payloads)
-	third := waitForHomeInFlightPublisherPayload(t, transport.payloads)
-	if elapsed := third.observedAt.Sub(second.observedAt); elapsed > 35*time.Millisecond {
-		t.Fatalf("publisher interval after update = %v, want <= 35ms", elapsed)
+
+	// Drive the next two cycles explicitly and confirm the hot interval.
+	ticker.fire()
+	waitForHomeInFlightPublisherPayload(t, transport.payloads)
+	if got := waitForHomeInFlightTickerReset(t, ticker.resets); got != 10*time.Millisecond {
+		t.Fatalf("publisher interval after update = %v, want 10ms", got)
+	}
+	ticker.fire()
+	waitForHomeInFlightPublisherPayload(t, transport.payloads)
+	if got := waitForHomeInFlightTickerReset(t, ticker.resets); got != 10*time.Millisecond {
+		t.Fatalf("publisher interval after update = %v, want 10ms", got)
 	}
 }

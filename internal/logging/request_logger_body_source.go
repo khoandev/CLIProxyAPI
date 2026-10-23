@@ -11,16 +11,42 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// FileBodySource stores large log sections as ordered temp-file parts.
+const (
+	// fileBodySourcePartMemoryLimit is the payload one part keeps in memory before spilling.
+	fileBodySourcePartMemoryLimit = 256 << 10
+	// fileBodySourceMemoryLimit is the total in-memory payload one source keeps across all parts.
+	fileBodySourceMemoryLimit = 1 << 20
+)
+
+// FileBodySource stores large log sections as ordered parts that stay in memory
+// until they outgrow the source budget, then spill to temp files under baseDir.
 type FileBodySource struct {
-	mu      sync.Mutex
-	dir     string
-	paths   []string
-	cleaned bool
+	mu         sync.Mutex
+	baseDir    string
+	prefix     string
+	dir        string
+	dirCreated bool
+	parts      []*fileBodySourcePart
+	cleaned    bool
+	memUsed    int
+	partLimit  int
+	totalLimit int
 }
 
-// NewFileBodySourceInDir creates a temp-backed source under baseDir.
+// fileBodySourcePart is one ordered section chunk, buffered in memory and spilled to a
+// temp file once it outgrows the source's part limit.
+type fileBodySourcePart struct {
+	spool *bodySpool
+}
+
+// NewFileBodySourceInDir creates a memory-first source that spills under baseDir.
 func NewFileBodySourceInDir(baseDir string, prefix string) (*FileBodySource, error) {
+	return newFileBodySourceInDir(baseDir, prefix, fileBodySourcePartMemoryLimit, fileBodySourceMemoryLimit)
+}
+
+// newFileBodySourceInDir creates a source with explicit memory budgets. partLimit
+// bounds one part, totalLimit bounds the whole source before the oldest parts spill.
+func newFileBodySourceInDir(baseDir string, prefix string, partLimit int, totalLimit int) (*FileBodySource, error) {
 	prefix = sanitizeTempPrefix(prefix)
 	baseDir = strings.TrimSpace(baseDir)
 	if baseDir == "" {
@@ -29,11 +55,12 @@ func NewFileBodySourceInDir(baseDir string, prefix string) (*FileBodySource, err
 	if errMkdir := os.MkdirAll(baseDir, 0755); errMkdir != nil {
 		return nil, errMkdir
 	}
-	dir, errCreate := os.MkdirTemp(baseDir, "request-log-parts-"+prefix+"-*")
-	if errCreate != nil {
-		return nil, errCreate
-	}
-	return &FileBodySource{dir: dir}, nil
+	return &FileBodySource{
+		baseDir:    baseDir,
+		prefix:     prefix,
+		partLimit:  partLimit,
+		totalLimit: totalLimit,
+	}, nil
 }
 
 func sanitizeTempPrefix(prefix string) string {
@@ -63,8 +90,55 @@ func sanitizeTempPrefix(prefix string) string {
 	return out
 }
 
+// ensureDirLocked creates the temp parts directory on first spill.
+func (s *FileBodySource) ensureDirLocked() (string, error) {
+	if s.dirCreated {
+		return s.dir, nil
+	}
+	dir, errCreate := os.MkdirTemp(s.baseDir, "request-log-parts-"+s.prefix+"-*")
+	if errCreate != nil {
+		return "", errCreate
+	}
+	s.dir = dir
+	s.dirCreated = true
+	return dir, nil
+}
+
+// newPartLocked appends one ordered part. The part resolves its spill directory
+// lazily, so a source that stays under budget never touches the filesystem.
+func (s *FileBodySource) newPartLocked(prefix string) *fileBodySourcePart {
+	part := &fileBodySourcePart{spool: newBodySpool("", s.partLimit).withDirFunc(s.ensureDirLocked).withPrefix(prefix)}
+	s.parts = append(s.parts, part)
+	return part
+}
+
+// enforceTotalLimitLocked spills the oldest in-memory parts until the source fits
+// its total memory budget. A spill failure only stops spilling; appends keep
+// succeeding from the remaining memory.
+func (s *FileBodySource) enforceTotalLimitLocked() {
+	for s.memUsed > s.totalLimit {
+		spilled := false
+		for _, part := range s.parts {
+			data := part.spool.Bytes()
+			if data == nil {
+				continue
+			}
+			if errSpill := part.spool.spill(); errSpill != nil {
+				log.WithError(errSpill).Warn("failed to spill request log part")
+				return
+			}
+			s.memUsed -= len(data)
+			spilled = true
+			break
+		}
+		if !spilled {
+			return
+		}
+	}
+}
+
 // CreatePart creates one ordered detail log part.
-func (s *FileBodySource) CreatePart(prefix string) (*os.File, error) {
+func (s *FileBodySource) CreatePart(prefix string) (io.WriteCloser, error) {
 	if s == nil {
 		return nil, fmt.Errorf("file body source is nil")
 	}
@@ -73,16 +147,40 @@ func (s *FileBodySource) CreatePart(prefix string) (*os.File, error) {
 	if s.cleaned {
 		return nil, fmt.Errorf("file body source has been cleaned")
 	}
-	prefix = sanitizeTempPrefix(prefix)
-	if errMkdir := os.MkdirAll(s.dir, 0755); errMkdir != nil {
-		return nil, errMkdir
+	part := s.newPartLocked(prefix)
+	return &fileBodySourcePartWriter{source: s, part: part}, nil
+}
+
+// fileBodySourcePartWriter streams one part through its in-memory spool.
+type fileBodySourcePartWriter struct {
+	source *FileBodySource
+	part   *fileBodySourcePart
+	closed bool
+}
+
+func (w *fileBodySourcePartWriter) Write(data []byte) (int, error) {
+	if w == nil || w.part == nil {
+		return 0, fmt.Errorf("file body source part is nil")
 	}
-	file, errCreate := os.CreateTemp(s.dir, prefix+"-*.tmp")
-	if errCreate != nil {
-		return nil, errCreate
+	if w.closed {
+		return 0, fmt.Errorf("file body source part is closed")
 	}
-	s.paths = append(s.paths, file.Name())
-	return file, nil
+	n, errWrite := w.part.spool.Write(data)
+	if n > 0 && w.source != nil {
+		w.source.mu.Lock()
+		w.source.memUsed += n
+		w.source.enforceTotalLimitLocked()
+		w.source.mu.Unlock()
+	}
+	return n, errWrite
+}
+
+func (w *fileBodySourcePartWriter) Close() error {
+	if w == nil {
+		return nil
+	}
+	w.closed = true
+	return nil
 }
 
 // AppendPart appends one complete ordered part to the source.
@@ -91,17 +189,29 @@ func (s *FileBodySource) AppendPart(data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	file, errCreate := s.CreatePart("part")
-	if errCreate != nil {
-		return errCreate
+	if s == nil {
+		return fmt.Errorf("file body source is nil")
 	}
-	writeErr := writeLogPart(file, data, false)
-	if errClose := file.Close(); errClose != nil {
-		if writeErr == nil {
-			writeErr = errClose
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cleaned {
+		return fmt.Errorf("file body source has been cleaned")
+	}
+	part := s.newPartLocked("part")
+	n, errWrite := part.spool.Write(data)
+	s.memUsed += n
+	if errWrite != nil {
+		return errWrite
+	}
+	if !bytes.HasSuffix(data, []byte("\n")) {
+		_, errWrite = part.spool.WriteString("\n")
+		if errWrite != nil {
+			return errWrite
 		}
+		s.memUsed++
 	}
-	return writeErr
+	s.enforceTotalLimitLocked()
+	return nil
 }
 
 // AppendBytes appends raw bytes to a single ordered part.
@@ -117,31 +227,47 @@ func (s *FileBodySource) AppendBytes(data []byte) error {
 	if s.cleaned {
 		return fmt.Errorf("file body source has been cleaned")
 	}
-	if errMkdir := os.MkdirAll(s.dir, 0755); errMkdir != nil {
-		return errMkdir
-	}
-
-	var file *os.File
-	var errOpen error
-	if len(s.paths) == 0 {
-		file, errOpen = os.CreateTemp(s.dir, "part-*.tmp")
-		if errOpen == nil {
-			s.paths = append(s.paths, file.Name())
-		}
+	var part *fileBodySourcePart
+	if len(s.parts) == 0 {
+		part = s.newPartLocked("part")
 	} else {
-		file, errOpen = os.OpenFile(s.paths[len(s.paths)-1], os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		part = s.parts[len(s.parts)-1]
 	}
-	if errOpen != nil {
-		return errOpen
+	n, errWrite := part.spool.Write(data)
+	s.memUsed += n
+	if errWrite != nil {
+		return errWrite
 	}
+	s.enforceTotalLimitLocked()
+	return nil
+}
 
-	_, writeErr := file.Write(data)
-	if errClose := file.Close(); errClose != nil {
-		if writeErr == nil {
-			writeErr = errClose
-		}
+// AppendString appends text to a single ordered part without converting it to bytes.
+func (s *FileBodySource) AppendString(text string) error {
+	if s == nil {
+		return fmt.Errorf("file body source is nil")
 	}
-	return writeErr
+	if len(text) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cleaned {
+		return fmt.Errorf("file body source has been cleaned")
+	}
+	var part *fileBodySourcePart
+	if len(s.parts) == 0 {
+		part = s.newPartLocked("part")
+	} else {
+		part = s.parts[len(s.parts)-1]
+	}
+	n, errWrite := part.spool.WriteString(text)
+	s.memUsed += n
+	if errWrite != nil {
+		return errWrite
+	}
+	s.enforceTotalLimitLocked()
+	return nil
 }
 
 // HasPayload reports whether any detail parts were recorded.
@@ -151,18 +277,22 @@ func (s *FileBodySource) HasPayload() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.paths) > 0 && !s.cleaned
+	return len(s.parts) > 0 && !s.cleaned
 }
 
-// Paths returns a copy of the ordered part paths.
+// Paths returns the spill paths of the parts that outgrew memory, in order.
 func (s *FileBodySource) Paths() []string {
 	if s == nil {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]string, len(s.paths))
-	copy(out, s.paths)
+	out := make([]string, 0, len(s.parts))
+	for _, part := range s.parts {
+		if path := part.spool.Path(); path != "" {
+			out = append(out, path)
+		}
+	}
 	return out
 }
 
@@ -171,41 +301,67 @@ func (s *FileBodySource) WriteTo(w io.Writer) (int64, error) {
 	if s == nil || w == nil {
 		return 0, nil
 	}
+	parts := s.snapshotParts()
 	var totalWritten int64
-	paths := s.Paths()
 	wrote := false
-	for _, path := range paths {
-		file, errOpen := os.Open(path)
-		if errOpen != nil {
-			if os.IsNotExist(errOpen) {
+	for _, part := range parts {
+		payload := part.spool.Bytes()
+		path := ""
+		if len(payload) == 0 {
+			path = part.spool.Path()
+			if path == "" {
 				continue
 			}
-			return totalWritten, errOpen
 		}
 		if wrote {
 			n, errWrite := io.WriteString(w, "\n")
 			totalWritten += int64(n)
 			if errWrite != nil {
-				if errClose := file.Close(); errClose != nil {
-					log.WithError(errClose).Warn("failed to close log part file")
-				}
 				return totalWritten, errWrite
 			}
 		}
-		n, errCopy := io.Copy(w, file)
-		totalWritten += n
-		if errClose := file.Close(); errClose != nil {
-			log.WithError(errClose).Warn("failed to close log part file")
-			if errCopy == nil {
-				errCopy = errClose
+		if len(payload) > 0 {
+			n, errWrite := w.Write(payload)
+			totalWritten += int64(n)
+			if errWrite != nil {
+				return totalWritten, errWrite
 			}
-		}
-		if errCopy != nil {
-			return totalWritten, errCopy
+		} else {
+			n, errCopy := s.copyPartFile(w, path)
+			totalWritten += n
+			if errCopy != nil {
+				return totalWritten, errCopy
+			}
 		}
 		wrote = true
 	}
 	return totalWritten, nil
+}
+
+// copyPartFile copies one spilled part into w, tolerating an already removed file.
+func (s *FileBodySource) copyPartFile(w io.Writer, path string) (int64, error) {
+	file, errOpen := os.Open(path)
+	if errOpen != nil {
+		if os.IsNotExist(errOpen) {
+			return 0, nil
+		}
+		return 0, errOpen
+	}
+	n, errCopy := io.Copy(w, file)
+	if errClose := file.Close(); errClose != nil {
+		log.WithError(errClose).Warn("failed to close log part file")
+		if errCopy == nil {
+			errCopy = errClose
+		}
+	}
+	return n, errCopy
+}
+
+// snapshotParts returns the current parts so writes happen outside the source lock.
+func (s *FileBodySource) snapshotParts() []*fileBodySourcePart {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.parts
 }
 
 // Bytes merges all ordered parts into memory.
@@ -227,20 +383,24 @@ func (s *FileBodySource) Cleanup() error {
 		s.mu.Unlock()
 		return nil
 	}
-	paths := make([]string, len(s.paths))
-	copy(paths, s.paths)
+	parts := s.parts
 	dir := s.dir
-	s.paths = nil
+	dirCreated := s.dirCreated
+	s.parts = nil
 	s.cleaned = true
+	s.memUsed = 0
 	s.mu.Unlock()
 
 	var firstErr error
-	for _, path := range paths {
-		if errRemove := os.Remove(path); errRemove != nil && !os.IsNotExist(errRemove) && firstErr == nil {
-			firstErr = errRemove
+	for _, part := range parts {
+		if part == nil || part.spool == nil {
+			continue
+		}
+		if errRelease := part.spool.Release(); errRelease != nil && firstErr == nil {
+			firstErr = errRelease
 		}
 	}
-	if dir != "" {
+	if dirCreated && dir != "" {
 		if errRemove := os.RemoveAll(dir); errRemove != nil && firstErr == nil {
 			firstErr = errRemove
 		}

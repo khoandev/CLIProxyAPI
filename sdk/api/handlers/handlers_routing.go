@@ -98,7 +98,7 @@ func excludeExecutionProvider(providers []string, excluded string) []string {
 }
 
 func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {
-	return h.getRequestDetailsWithOptions(modelName, false, false)
+	return h.getRequestDetailsWithOptions(modelName, false, false, false)
 }
 
 func validateNativeInteractionsExecution(entryProtocol string, execOptions modelExecutionOptions, routeDecision modelRouteDecision) *interfaces.ErrorMessage {
@@ -159,10 +159,10 @@ func (h *BaseAPIHandler) providersForExecution(modelName, originalRequestedModel
 		}
 		return []string{routeDecision.Provider}, normalizedModel, nil
 	}
-	return h.getRequestDetailsWithOptions(modelName, allowImageModel, execOptions.AllowSpeechModel)
+	return h.getRequestDetailsWithOptions(modelName, allowImageModel, execOptions.AllowSpeechModel, execOptions.AllowVideoModel)
 }
 
-func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowImageModel, allowSpeechModel bool) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {
+func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowImageModel, allowSpeechModel, allowVideoModel bool) (providers []string, normalizedModel string, err *interfaces.ErrorMessage) {
 	resolvedModelName := modelName
 	initialSuffix := thinking.ParseSuffix(modelName)
 	if initialSuffix.ModelName == "auto" {
@@ -209,6 +209,16 @@ func (h *BaseAPIHandler) getRequestDetailsWithOptions(modelName string, allowIma
 	}
 
 	if len(providers) == 0 {
+		// When allowVideoModel is set, the caller is a video endpoint that may not carry
+		// a model (e.g. GET /videos list, DELETE /videos/:id). Fall back to all registered
+		// providers so that the conductor can select the first available credential.
+		isVideoModel := allowVideoModel
+		if isVideoModel {
+			if allProviders := util.GetAllProviderNames(); len(allProviders) > 0 {
+				return allProviders, resolvedModelName, nil
+			}
+		}
+
 		// The client asked for a model this proxy cannot route. Report it as a request
 		// error so streaming clients receive an actionable message instead of a
 		// gateway failure they would keep retrying. 400 is used rather than 404 to keep

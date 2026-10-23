@@ -1,6 +1,6 @@
 services:
   cli-proxy-api:
-    image: ${CLI_PROXY_IMAGE:-eceasy/cli-proxy-api:latest}
+    image: ${CLI_PROXY_IMAGE:-ghcr.io/312022151125/cliproxyapi:latest}
     pull_policy: always
     build:
       context: .
@@ -14,6 +14,9 @@ services:
     #   - .env
     environment:
       DEPLOY: ${DEPLOY:-}
+      # Empty values leave the Go runtime defaults in place; set them to cap the heap.
+      GOMEMLIMIT: ${GOMEMLIMIT:-}
+      GOGC: ${GOGC:-}
     ports:
       - "8317:8317"
       - "8085:8085"

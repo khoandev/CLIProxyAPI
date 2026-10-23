@@ -157,7 +157,7 @@ func TestIsRequestFault(t *testing.T) {
 		want   bool
 	}{
 		{name: "bad request status", status: http.StatusBadRequest, err: errors.New("bad request"), want: true},
-		{name: "conflict status", status: http.StatusConflict, err: errors.New("conflict"), want: true},
+		{name: "conflict status is not a request fault", status: http.StatusConflict, err: errors.New("conflict"), want: false},
 		{name: "entity too large status", status: http.StatusRequestEntityTooLarge, err: errors.New("too large"), want: true},
 		{name: "unprocessable status", status: http.StatusUnprocessableEntity, err: errors.New("unprocessable"), want: true},
 		{
@@ -179,9 +179,9 @@ func TestIsRequestFault(t *testing.T) {
 			want:   true,
 		},
 		{
-			name: "status from error",
+			name: "status from error non-fault",
 			err:  statusError{status: http.StatusConflict, body: "conflict"},
-			want: true,
+			want: false,
 		},
 		{
 			// Verbatim upstream text: plain text, not JSON, so it can only be matched

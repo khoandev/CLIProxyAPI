@@ -15,6 +15,16 @@ import (
 const (
 	websocketToolOutputCacheMaxPerSession = 256
 	websocketToolOutputCacheTTL           = 30 * time.Minute
+
+	// websocketToolOutputCacheMaxBytesPerSession bounds the cached tool output
+	// bytes of one session. The entry limit alone does not bound the memory a
+	// session uses, because every entry carries an arbitrary size payload.
+	websocketToolOutputCacheMaxBytesPerSession = 4 << 20
+
+	// websocketToolOutputCacheMaxSessions bounds the number of sessions the
+	// cache tracks. The session key comes from a client supplied header, so
+	// the number of sessions is client controlled.
+	websocketToolOutputCacheMaxSessions = 32
 )
 
 var defaultWebsocketToolOutputCache = newWebsocketToolOutputCache(0, websocketToolOutputCacheMaxPerSession)
@@ -33,6 +43,9 @@ type websocketToolOutputSession struct {
 	lastSeen time.Time
 	outputs  map[string]json.RawMessage
 	order    []string
+	// bytes tracks the cached payload size of the session so it can be
+	// bounded by size as well as by entry count.
+	bytes int
 }
 
 type responsesWebsocketToolCacheTurn struct {
@@ -44,7 +57,9 @@ type responsesWebsocketToolCacheTurn struct {
 }
 
 func newWebsocketToolOutputCache(ttl time.Duration, maxPerSession int) *websocketToolOutputCache {
-	if ttl < 0 {
+	if ttl <= 0 {
+		// A zero TTL used to disable the cleanup, which kept every session
+		// alive for the lifetime of the process.
 		ttl = websocketToolOutputCacheTTL
 	}
 	if maxPerSession <= 0 {
@@ -77,19 +92,46 @@ func (c *websocketToolOutputCache) record(sessionKey string, callID string, item
 			outputs:  make(map[string]json.RawMessage),
 		}
 		c.sessions[sessionKey] = session
+		c.evictSessionsLocked()
 	}
 	session.lastSeen = now
 
-	if _, exists := session.outputs[callID]; !exists {
+	previous, exists := session.outputs[callID]
+	if !exists {
 		session.order = append(session.order, callID)
 	}
-	session.outputs[callID] = append(json.RawMessage(nil), item...)
+	stored := append(json.RawMessage(nil), item...)
+	session.bytes -= len(previous)
+	session.outputs[callID] = stored
+	session.bytes += len(stored)
 
-	for len(session.order) > c.maxPerSession {
+	for len(session.order) > c.maxPerSession || session.bytes > websocketToolOutputCacheMaxBytesPerSession {
 		evict := session.order[0]
 		session.order[0] = ""
 		session.order = session.order[1:]
-		delete(session.outputs, evict)
+		if dropped, ok := session.outputs[evict]; ok {
+			session.bytes -= len(dropped)
+			delete(session.outputs, evict)
+		}
+	}
+}
+
+// evictSessionsLocked drops the least recently seen sessions until the cache
+// holds at most the session cap.
+func (c *websocketToolOutputCache) evictSessionsLocked() {
+	for len(c.sessions) > websocketToolOutputCacheMaxSessions {
+		oldestKey := ""
+		var oldest time.Time
+		for key, session := range c.sessions {
+			if oldestKey == "" || session.lastSeen.Before(oldest) {
+				oldestKey = key
+				oldest = session.lastSeen
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(c.sessions, oldestKey)
 	}
 }
 

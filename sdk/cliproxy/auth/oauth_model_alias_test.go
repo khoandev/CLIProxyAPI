@@ -239,7 +239,7 @@ func TestApplyOAuthModelAlias_ForceMappingSameBasePreservesSuffix(t *testing.T) 
 		"antigravity": {{
 			Name:         "gemini-2.5-pro",
 			Alias:        "gemini-2.5-pro(8192)",
-			ForceMapping: true,
+			ForceMapping: boolPtr(true),
 		}},
 	}
 
@@ -331,7 +331,7 @@ func TestApplyOAuthModelAlias_Devin(t *testing.T) {
 				Name:         "devin/claude-fable-5-1",
 				Alias:        "fable-5-1",
 				Fork:         true,
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			},
 		},
 	}
@@ -375,7 +375,7 @@ func TestApplyOAuthModelAlias_Meta(t *testing.T) {
 				Name:         "muse-spark-1.3",
 				Alias:        "muse-latest",
 				Fork:         true,
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			},
 		},
 	}
@@ -459,7 +459,7 @@ func TestApplyOAuthModelAliasWithResult_ForceMappingUsesConfigAliasNotRequestSuf
 	mgr := NewManager(nil, nil, nil)
 	mgr.SetOAuthModelAlias(map[string][]internalconfig.OAuthModelAlias{
 		"codex": {{
-			Name: "gpt-5.4", Alias: "gpt-5.4-fast", Fork: true, ForceMapping: true,
+			Name: "gpt-5.4", Alias: "gpt-5.4-fast", Fork: true, ForceMapping: boolPtr(true),
 		}},
 	})
 	auth := &Auth{ID: "t", Provider: "codex"}
@@ -477,7 +477,7 @@ func TestApplyOAuthModelAliasWithResultPrefersExactSuffixedAlias(t *testing.T) {
 	manager.SetOAuthModelAlias(map[string][]internalconfig.OAuthModelAlias{
 		"codex": {
 			{Name: "base-upstream", Alias: "public", Fork: true},
-			{Name: "low-upstream", Alias: "public(low)", Fork: true, ForceMapping: true},
+			{Name: "low-upstream", Alias: "public(low)", Fork: true, ForceMapping: boolPtr(true)},
 		},
 	})
 	auth := &Auth{ID: "exact-suffix", Provider: "codex"}
@@ -492,7 +492,7 @@ func TestApplyOAuthModelAliasWithResult_NoForceMappingPreservesRequestedModelInO
 	mgr := NewManager(nil, nil, nil)
 	mgr.SetOAuthModelAlias(map[string][]internalconfig.OAuthModelAlias{
 		"codex": {{
-			Name: "gpt-5.4", Alias: "gpt-5.4-fast", Fork: true, ForceMapping: false,
+			Name: "gpt-5.4", Alias: "gpt-5.4-fast", Fork: true, ForceMapping: boolPtr(false),
 		}},
 	})
 	auth := &Auth{ID: "t", Provider: "codex"}

@@ -130,7 +130,7 @@ func TestRegisterModelsForAuth_OpenAICompatibilityImageModelType(t *testing.T) {
 					Name:    "images",
 					BaseURL: "https://example.com/v1",
 					Models: []config.OpenAICompatibilityModel{
-						{Name: "upstream-image", Alias: "compat-image", Image: true},
+						{Name: "upstream-image", Alias: "compat-image", Image: boolPtrCC(true)},
 						{Name: "upstream-chat", Alias: "compat-chat"},
 					},
 				},
@@ -173,11 +173,12 @@ func TestRegisterModelsForAuth_OpenAICompatibilityImageModelType(t *testing.T) {
 	if imageModel == nil {
 		t.Fatal("expected compat-image to be registered")
 	}
-	if imageModel.Type != internalregistry.OpenAIImageModelType {
-		t.Fatalf("image model type = %q, want %q", imageModel.Type, internalregistry.OpenAIImageModelType)
+	// Image: true means image endpoints are enabled; type stays "openai-compatibility".
+	if imageModel.Type != "openai-compatibility" {
+		t.Fatalf("image model type = %q, want openai-compatibility", imageModel.Type)
 	}
-	if imageModel.Thinking != nil {
-		t.Fatalf("image model thinking = %+v, want nil", imageModel.Thinking)
+	if imageModel.ImageDisabled {
+		t.Fatal("image model should not have ImageDisabled set when Image: true")
 	}
 	if chatModel == nil {
 		t.Fatal("expected compat-chat to be registered")
@@ -204,7 +205,7 @@ func TestRegisterModelsForAuth_OpenAICompatibilityInputModalities(t *testing.T) 
 							InputModalities:  []string{"text", "image"},
 							OutputModalities: []string{"text"},
 						},
-						{Name: "upstream-image", Alias: "compat-image", Image: true},
+						{Name: "upstream-image", Alias: "compat-image", Image: boolPtrCC(true)},
 					},
 				},
 			},
@@ -258,8 +259,12 @@ func TestRegisterModelsForAuth_OpenAICompatibilityInputModalities(t *testing.T) 
 	if imageEndpointModel == nil {
 		t.Fatal("expected compat-image to be registered")
 	}
-	if imageEndpointModel.Type != internalregistry.OpenAIImageModelType {
-		t.Fatalf("image endpoint model type = %q, want %q", imageEndpointModel.Type, internalregistry.OpenAIImageModelType)
+	// Image: true keeps type "openai-compatibility"; ImageDisabled stays false.
+	if imageEndpointModel.Type != "openai-compatibility" {
+		t.Fatalf("image endpoint model type = %q, want openai-compatibility", imageEndpointModel.Type)
+	}
+	if imageEndpointModel.ImageDisabled {
+		t.Fatal("image endpoint model should not have ImageDisabled set when Image: true")
 	}
 	if len(imageEndpointModel.SupportedInputModalities) != 0 {
 		t.Fatalf("image endpoint model should not inherit chat input modalities: %+v", imageEndpointModel.SupportedInputModalities)

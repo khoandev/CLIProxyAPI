@@ -103,7 +103,10 @@ func TestChatCompletionsStreamWithoutFinishReasonIsReportedAsError(t *testing.T)
 	if !strings.Contains(out, "finish_reason") {
 		t.Errorf("truncated stream did not surface an error naming the missing terminator: %q", out)
 	}
-	if !strings.Contains(out, `"error":{"message":"upstream stream closed before any chunk carried finish_reason"`) {
+	// The message is built locally, so this fork appends a branding suffix to it.
+	// Match the message prefix instead of the closing quote so the assertion
+	// holds with and without the suffix.
+	if !strings.Contains(out, `"error":{"message":"upstream stream closed before any chunk carried finish_reason`) {
 		t.Errorf("truncated stream did not format structured error payload: %q", out)
 	}
 }

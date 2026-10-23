@@ -10,8 +10,9 @@ import (
 )
 
 // FileStreamingLogWriter implements StreamingLogWriter for file-based streaming logs.
-// It spools streaming response chunks to a temporary file to avoid retaining large responses in memory.
-// The final log file is assembled when Close is called.
+// Response chunks are copied into a body spool that stays in memory up to the
+// spool limit and spills to a temporary file beyond it. The final log file is
+// assembled when Close is called.
 type FileStreamingLogWriter struct {
 	// logsDir is the target directory for log files.
 	logsDir string
@@ -31,23 +32,14 @@ type FileStreamingLogWriter struct {
 	// requestHeaders stores the request headers.
 	requestHeaders map[string][]string
 
-	// requestBodyPath is a temporary file path holding the request body.
-	requestBodyPath string
+	// requestSpool holds the request body for later assembly.
+	requestSpool *bodySpool
 
-	// responseBodyPath is a temporary file path holding the streaming response body.
-	responseBodyPath string
+	// responseSpool accumulates the streamed response body.
+	responseSpool *bodySpool
 
-	// responseBodyFile is the temp file where chunks are appended by the async writer.
-	responseBodyFile *os.File
-
-	// chunkChan is a channel for receiving response chunks to spool.
-	chunkChan chan []byte
-
-	// closeChan is a channel for signaling when the writer is closed.
-	closeChan chan struct{}
-
-	// errorChan is a channel for reporting errors during writing.
-	errorChan chan error
+	// writeErr records the first spool write failure.
+	writeErr error
 
 	// responseStatus stores the HTTP status code.
 	responseStatus int
@@ -77,24 +69,17 @@ type FileStreamingLogWriter struct {
 	apiResponseTimestamp time.Time
 }
 
-// WriteChunkAsync writes a response chunk asynchronously (non-blocking).
+// WriteChunkAsync spools a response chunk for later assembly. The spool copies
+// chunk before returning, so the caller may reuse its buffer.
 //
 // Parameters:
 //   - chunk: The response chunk to write
 func (w *FileStreamingLogWriter) WriteChunkAsync(chunk []byte) {
-	if w.chunkChan == nil {
+	if w.responseSpool == nil || len(chunk) == 0 {
 		return
 	}
-
-	// Make a copy of the chunk to avoid data races
-	chunkCopy := make([]byte, len(chunk))
-	copy(chunkCopy, chunk)
-
-	// Non-blocking send
-	select {
-	case w.chunkChan <- chunkCopy:
-	default:
-		// Channel is full, skip this chunk to avoid blocking
+	if _, errWrite := w.responseSpool.Write(chunk); errWrite != nil && w.writeErr == nil {
+		w.writeErr = errWrite
 	}
 }
 
@@ -200,34 +185,20 @@ func (w *FileStreamingLogWriter) SetFirstChunkTimestamp(timestamp time.Time) {
 // Returns:
 //   - error: An error if closing fails, nil otherwise
 func (w *FileStreamingLogWriter) Close() error {
-	if w.chunkChan != nil {
-		close(w.chunkChan)
+	defer func() {
+		w.requestSpool.Cleanup()
+		w.responseSpool.Cleanup()
+	}()
+	if w.writeErr != nil {
+		return w.writeErr
 	}
-
-	// Wait for async writer to finish spooling chunks
-	if w.closeChan != nil {
-		<-w.closeChan
-		w.chunkChan = nil
-	}
-
-	select {
-	case errWrite := <-w.errorChan:
-		w.cleanupTempFiles()
-		return errWrite
-	default:
-	}
-
 	if w.logFilename == "" {
-		w.cleanupTempFiles()
 		return nil
 	}
-
 	logFile, _, errOpen := createUniqueLogFile(w.logsDir, w.logFilename)
 	if errOpen != nil {
-		w.cleanupTempFiles()
 		return fmt.Errorf("failed to create log file: %w", errOpen)
 	}
-
 	writeErr := w.writeFinalLog(logFile)
 	if errClose := logFile.Close(); errClose != nil {
 		log.WithError(errClose).Warn("failed to close request log file")
@@ -235,49 +206,11 @@ func (w *FileStreamingLogWriter) Close() error {
 			writeErr = errClose
 		}
 	}
-
-	w.cleanupTempFiles()
 	return writeErr
 }
 
-// asyncWriter runs in a goroutine to buffer chunks from the channel.
-// It continuously reads chunks from the channel and appends them to a temp file for later assembly.
-func (w *FileStreamingLogWriter) asyncWriter() {
-	defer close(w.closeChan)
-
-	for chunk := range w.chunkChan {
-		if w.responseBodyFile == nil {
-			continue
-		}
-		if _, errWrite := w.responseBodyFile.Write(chunk); errWrite != nil {
-			select {
-			case w.errorChan <- errWrite:
-			default:
-			}
-			if errClose := w.responseBodyFile.Close(); errClose != nil {
-				select {
-				case w.errorChan <- errClose:
-				default:
-				}
-			}
-			w.responseBodyFile = nil
-		}
-	}
-
-	if w.responseBodyFile == nil {
-		return
-	}
-	if errClose := w.responseBodyFile.Close(); errClose != nil {
-		select {
-		case w.errorChan <- errClose:
-		default:
-		}
-	}
-	w.responseBodyFile = nil
-}
-
 func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
-	if errWrite := writeRequestInfoWithBody(logFile, w.url, w.method, w.requestHeaders, nil, w.requestBodyPath, w.timestamp, "http", inferUpstreamTransport(w.apiRequest, w.apiRequestSource, w.apiResponse, w.apiResponseSource, w.apiWebsocketTimeline, nil, nil), true); errWrite != nil {
+	if errWrite := writeRequestInfoWithBody(logFile, w.url, w.method, w.requestHeaders, w.requestSpool.Bytes(), w.requestSpool.Path(), w.timestamp, "http", inferUpstreamTransport(w.apiRequest, w.apiRequestSource, w.apiResponse, w.apiResponseSource, w.apiWebsocketTimeline, nil, nil), true); errWrite != nil {
 		return errWrite
 	}
 	if errWrite := writeAPISection(logFile, "=== API WEBSOCKET TIMELINE ===\n", "=== API WEBSOCKET TIMELINE", w.apiWebsocketTimeline, time.Time{}); errWrite != nil {
@@ -290,33 +223,17 @@ func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
 		return errWrite
 	}
 
-	responseBodyFile, errOpen := os.Open(w.responseBodyPath)
-	if errOpen != nil {
-		return errOpen
+	responseReader, errReader := w.responseSpool.Reader()
+	if errReader != nil {
+		return errReader
 	}
 	defer func() {
-		if errClose := responseBodyFile.Close(); errClose != nil {
-			log.WithError(errClose).Warn("failed to close response body temp file")
+		if errClose := responseReader.Close(); errClose != nil {
+			log.WithError(errClose).Warn("failed to close response body spool")
 		}
 	}()
 
-	return writeResponseSection(logFile, w.responseStatus, w.statusWritten, w.responseHeaders, responseBodyFile, nil, false)
-}
-
-func (w *FileStreamingLogWriter) cleanupTempFiles() {
-	if w.requestBodyPath != "" {
-		if errRemove := os.Remove(w.requestBodyPath); errRemove != nil {
-			log.WithError(errRemove).Warn("failed to remove request body temp file")
-		}
-		w.requestBodyPath = ""
-	}
-
-	if w.responseBodyPath != "" {
-		if errRemove := os.Remove(w.responseBodyPath); errRemove != nil {
-			log.WithError(errRemove).Warn("failed to remove response body temp file")
-		}
-		w.responseBodyPath = ""
-	}
+	return writeResponseSection(logFile, w.responseStatus, w.statusWritten, w.responseHeaders, responseReader, nil, false)
 }
 
 // NoOpStreamingLogWriter is a no-operation implementation for when logging is disabled.

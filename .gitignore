@@ -1,6 +1,7 @@
 # Binaries
 cli-proxy-api
 *.exe
+*.test
 
 # Configuration
 config.yaml
@@ -64,6 +65,6 @@ _bmad-output/*
 # docker
 docker-compose.override.yml
 
-
 # Local LLM Wiki vault
 .llm-wiki
+config.yml

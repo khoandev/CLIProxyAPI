@@ -1,6 +1,7 @@
 package common
 
 import (
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -25,7 +26,7 @@ func (a *ClaudeMessageAccumulator) Append(message []byte) {
 	if len(message) == 0 {
 		return
 	}
-	root := gjson.ParseBytes(message)
+	root := util.ParseGJSONBytesNoCopy(message)
 	role := root.Get("role").String()
 	if role != "user" && role != "assistant" {
 		return
@@ -62,7 +63,9 @@ func (a *ClaudeMessageAccumulator) Flush() {
 	if len(parts) > 0 {
 		message := []byte(`{"role":"","content":[]}`)
 		message, _ = sjson.SetBytes(message, "role", a.role)
-		message, _ = sjson.SetRawBytes(message, "content", JoinRawArray(parts))
+		// The items are spliced into the empty array, so the content is copied
+		// once instead of being joined and then written into the message.
+		message = SetRawArrayItems(message, "content", parts)
 		a.messages = append(a.messages, message)
 	}
 	a.role = ""

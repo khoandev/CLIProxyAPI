@@ -82,6 +82,9 @@ func buildV8Paths() []configPath {
 		{"transient-error-cooldown-seconds", "routing.cooldown.transient-error-cooldown-seconds"},
 		{"proxy-url", "requests.proxy-url"}, {"tls-handshake-timeout-seconds", "requests.tls-handshake-timeout-seconds"}, {"passthrough-headers", "requests.passthrough-headers"},
 		{"nonstream-keepalive-interval", "requests.nonstream-keepalive-interval"}, {"streaming", "requests.streaming"}, {"payload", "requests.payload"},
+		{"fast-service-tier", "requests.fast-service-tier"},
+		{"openai-compat-429-key-rotation", "requests.openai-compat-429-key-rotation"},
+		{"fallback-to-all-providers", "requests.fallback-to-all-providers"},
 		{"auth-dir", "oauth.auth-dir"}, {"auth-auto-refresh-workers", "oauth.auth-auto-refresh-workers"},
 		{"oauth-model-alias", "oauth.model-alias"}, {"oauth-excluded-models", "oauth.excluded-models"},
 		{"oauth-request-scoped-errors", "oauth.request-scoped-errors"}, {"oauth-settings", "oauth.settings"}, {"ws-auth", "oauth.providers.aistudio.ws-auth"},
@@ -107,6 +110,7 @@ func buildV8Paths() []configPath {
 		{"error-logs-max-files", "observability.logs.error-logs-max-files"},
 		{"usage-statistics-enabled", "observability.usage.usage-statistics-enabled"},
 		{"redis-usage-queue-retention-seconds", "observability.usage.redis-usage-queue-retention-seconds"}, {"pprof", "observability.pprof"},
+		{"cache-hit-cost-ratio", "observability.usage.cache-hit-cost-ratio"},
 	}
 	var out []configPath
 	var walk func(reflect.Type, string, []int)

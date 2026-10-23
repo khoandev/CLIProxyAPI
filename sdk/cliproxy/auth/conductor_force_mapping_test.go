@@ -231,7 +231,7 @@ func setupForceMappingManager(t *testing.T, provider, upstreamModel, aliasModel 
 			Name:         upstreamModel,
 			Alias:        aliasModel,
 			Fork:         true,
-			ForceMapping: true,
+			ForceMapping: boolPtr(true),
 		}},
 	})
 
@@ -269,7 +269,7 @@ func setupForceMappingCreditsFallbackManager(t *testing.T, upstreamModel, aliasM
 			Name:         upstreamModel,
 			Alias:        aliasModel,
 			Fork:         true,
-			ForceMapping: true,
+			ForceMapping: boolPtr(true),
 		}},
 	})
 
@@ -569,7 +569,7 @@ func setupAPIKeyForceMappingManager(t *testing.T, provider, upstreamModel, alias
 			Models: []internalconfig.ClaudeModel{{
 				Name:         upstreamModel,
 				Alias:        aliasModel,
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			}},
 		}}
 	case "codex":
@@ -578,7 +578,7 @@ func setupAPIKeyForceMappingManager(t *testing.T, provider, upstreamModel, alias
 			Models: []internalconfig.CodexModel{{
 				Name:         upstreamModel,
 				Alias:        aliasModel,
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			}},
 		}}
 	case "xai":
@@ -587,7 +587,7 @@ func setupAPIKeyForceMappingManager(t *testing.T, provider, upstreamModel, alias
 			Models: []internalconfig.XAIModel{{
 				Name:         upstreamModel,
 				Alias:        aliasModel,
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			}},
 		}}
 	case "vertex":
@@ -596,7 +596,7 @@ func setupAPIKeyForceMappingManager(t *testing.T, provider, upstreamModel, alias
 			Models: []internalconfig.VertexCompatModel{{
 				Name:         upstreamModel,
 				Alias:        aliasModel,
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			}},
 		}}
 	case "openai-compatibility":
@@ -605,7 +605,7 @@ func setupAPIKeyForceMappingManager(t *testing.T, provider, upstreamModel, alias
 			Models: []internalconfig.OpenAICompatibilityModel{{
 				Name:         upstreamModel,
 				Alias:        aliasModel,
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			}},
 		}}
 	default:

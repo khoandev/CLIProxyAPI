@@ -527,7 +527,11 @@ func ensureImageGenerationTool(body []byte, baseModel string, auth *cliproxyauth
 	if util.IsCodexResponsesLiteRequest(body, headers) {
 		return body
 	}
-	if strings.HasSuffix(baseModel, "spark") {
+	baseModelSuffix := baseModel
+	if idx := strings.LastIndex(baseModel, "/"); idx >= 0 {
+		baseModelSuffix = baseModel[idx+1:]
+	}
+	if strings.HasSuffix(baseModelSuffix, "spark") || strings.HasPrefix(baseModelSuffix, "muse-spark-") {
 		return body
 	}
 	if isCodexFreePlanAuth(auth) {

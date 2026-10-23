@@ -21,6 +21,8 @@ const ErrorCodeConnectionLifecycle = "connection_lifecycle"
 
 const connectionLifecycleErrorCode = ErrorCodeConnectionLifecycle
 
+const upstreamTimeoutErrorCode = "upstream_timeout"
+
 // ErrorCodeTransientTransport marks pre-HTTP dial/TLS/DNS/reset failures that
 // must skip credential cooldown and remain eligible for request-retry rounds.
 const ErrorCodeTransientTransport = "transient_transport"
@@ -29,6 +31,40 @@ const transientTransportErrorCode = ErrorCodeTransientTransport
 
 // ErrorCodeForceCooldown marks failures that must enforce credential cooldown.
 const ErrorCodeForceCooldown = "force_cooldown"
+
+const (
+	markerProviderEnded   = "Provider ended the request"
+	markerUpstreamTimeout = "上游响应超时"
+)
+
+// hasUpstreamTimeoutMarker performs a literal case-sensitive check for upstream timeout markers.
+func hasUpstreamTimeoutMarker(text string) bool {
+	return strings.Contains(text, markerProviderEnded) || strings.Contains(text, markerUpstreamTimeout)
+}
+
+// newUpstreamTimeoutError returns a semantic upstream timeout Error.
+// The upstream text is intentionally not retained: Error.Message is serialized
+// into client responses, and timeout payloads may contain provider-local text.
+func newUpstreamTimeoutError(_ string) *Error {
+	return &Error{
+		Code:       upstreamTimeoutErrorCode,
+		Message:    "upstream provider timeout; retry the request",
+		Retryable:  true,
+		HTTPStatus: 503,
+	}
+}
+
+// isUpstreamTimeoutError checks if an error represents a semantic upstream timeout failure.
+func isUpstreamTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var authErr *Error
+	if errors.As(err, &authErr) && authErr != nil && authErr.Code == upstreamTimeoutErrorCode {
+		return true
+	}
+	return hasUpstreamTimeoutMarker(err.Error())
+}
 
 // Error describes an authentication related failure in a provider agnostic format.
 type Error struct {

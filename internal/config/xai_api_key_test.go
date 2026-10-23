@@ -86,7 +86,7 @@ func TestParseConfigBytesXAIAPIKeyMatchesCodexShape(t *testing.T) {
 		t.Fatalf("model count = %d, want 1", len(entry.Models))
 	}
 	model := entry.Models[0]
-	if model.Name != "grok-4.5" || model.Alias != "grok-latest" || model.DisplayName != "Grok Latest" || !model.ForceMapping {
+	if model.Name != "grok-4.5" || model.Alias != "grok-latest" || model.DisplayName != "Grok Latest" || !model.GetForceMapping() {
 		t.Fatalf("unexpected model mapping: %+v", model)
 	}
 	if len(entry.ExcludedModels) != 1 || entry.ExcludedModels[0] != "grok-3-*" {

@@ -531,6 +531,75 @@ func TestContextManagementCompactionCompatibility(t *testing.T) {
 	}
 }
 
+func TestServiceTierValidation_FastNormalizedToPriority(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.2",
+		"service_tier": "fast",
+		"input": [{"role":"user","content":"hello"}]
+	}`)
+
+	output, _ := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
+	outputStr := string(output)
+
+	serviceTier := gjson.Get(outputStr, "service_tier")
+	if !serviceTier.Exists() {
+		t.Fatal("service_tier should exist after validation")
+	}
+	if serviceTier.String() != "priority" {
+		t.Errorf("Expected service_tier 'priority', got '%s'", serviceTier.String())
+	}
+}
+
+func TestServiceTierNormalization_PriorityUnchanged(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.2",
+		"service_tier": "priority",
+		"input": [{"role":"user","content":"hello"}]
+	}`)
+
+	output, _ := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
+	outputStr := string(output)
+
+	serviceTier := gjson.Get(outputStr, "service_tier")
+	if !serviceTier.Exists() {
+		t.Fatal("service_tier should exist")
+	}
+	if serviceTier.String() != "priority" {
+		t.Errorf("Expected service_tier 'priority', got '%s'", serviceTier.String())
+	}
+}
+
+func TestServiceTierNormalization_UnsupportedRemoved(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.2",
+		"service_tier": "auto",
+		"input": [{"role":"user","content":"hello"}]
+	}`)
+
+	output, _ := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
+	outputStr := string(output)
+
+	serviceTier := gjson.Get(outputStr, "service_tier")
+	if serviceTier.Exists() {
+		t.Errorf("Unsupported service_tier 'auto' should be removed, but found: '%s'", serviceTier.String())
+	}
+}
+
+func TestServiceTierNormalization_NoServiceTier(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.2",
+		"input": [{"role":"user","content":"hello"}]
+	}`)
+
+	output, _ := ConvertOpenAIResponsesRequestToCodex("gpt-5.2", inputJSON, false)
+	outputStr := string(output)
+
+	serviceTier := gjson.Get(outputStr, "service_tier")
+	if serviceTier.Exists() {
+		t.Errorf("service_tier should not exist when not provided, but found: '%s'", serviceTier.String())
+	}
+}
+
 func TestTruncationRemovedForCodexCompatibility(t *testing.T) {
 	inputJSON := []byte(`{
 		"model": "gpt-5.2",

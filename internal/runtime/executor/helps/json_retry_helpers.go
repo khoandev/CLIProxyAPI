@@ -25,6 +25,13 @@ func DeleteJSONField(body []byte, key string) []byte {
 
 // ParseRetryDelay extracts the retry delay from a Google API 429 error response.
 func ParseRetryDelay(errorBody []byte) (*time.Duration, error) {
+	rateLimitedUntil := regexp.MustCompile(`(?i)rate limited until\s+([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2}))`)
+	if matches := rateLimitedUntil.FindSubmatch(errorBody); len(matches) > 1 {
+		if until, err := time.Parse(time.RFC3339, string(matches[1])); err == nil {
+			duration := time.Until(until)
+			return &duration, nil
+		}
+	}
 	details := gjson.GetBytes(errorBody, "error.details")
 	if details.Exists() && details.IsArray() {
 		for _, detail := range details.Array() {

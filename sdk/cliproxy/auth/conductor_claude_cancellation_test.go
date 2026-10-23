@@ -246,8 +246,10 @@ func TestManagerClaudeRefreshCancellationStopsWithoutCooldown(t *testing.T) {
 }
 
 func TestManagerClaudeStreamTailCancellationIsAvailabilityNeutral(t *testing.T) {
-	source := make(chan cliproxyexecutor.StreamChunk, 1)
+	source := make(chan cliproxyexecutor.StreamChunk, 2)
 	source <- cliproxyexecutor.StreamChunk{Payload: []byte("first")}
+	source <- cliproxyexecutor.StreamChunk{Err: claudeRequestScopedCancellation{}}
+	close(source)
 	executor := &claudeCancellationTestExecutor{
 		streamFn: func(context.Context, *Auth) (*cliproxyexecutor.StreamResult, error) {
 			return &cliproxyexecutor.StreamResult{Chunks: source}, nil
@@ -256,6 +258,7 @@ func TestManagerClaudeStreamTailCancellationIsAvailabilityNeutral(t *testing.T) 
 	hook := &resultCaptureHook{}
 	manager, auth, model := newClaudeCancellationTestManager(t, executor, hook)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	stream, errStream := manager.ExecuteStream(ctx, []string{"claude"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{Stream: true})
 	if errStream != nil {
@@ -264,12 +267,8 @@ func TestManagerClaudeStreamTailCancellationIsAvailabilityNeutral(t *testing.T) 
 	if chunk := <-stream.Chunks; chunk.Err != nil || string(chunk.Payload) != "first" {
 		t.Fatalf("first chunk = %#v", chunk)
 	}
-	cancel()
-	source <- cliproxyexecutor.StreamChunk{Err: claudeRequestScopedCancellation{}}
-	close(source)
 	for range stream.Chunks {
 	}
-
 	results := hook.Results()
 	if len(results) != 1 || results[0].Success || results[0].Error == nil {
 		t.Fatalf("results = %#v, want one failed cancellation result", results)

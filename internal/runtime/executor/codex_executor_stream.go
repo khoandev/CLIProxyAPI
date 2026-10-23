@@ -97,6 +97,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	body = sanitizeOpenAIResponsesReasoningEncryptedContentWithCompatModelAndBaseURL(ctx, "codex executor", body, isCompat, targetModel, baseURL)
 
 	url := strings.TrimSuffix(baseURL, "/") + "/responses"
+	body = applyCodexFastServiceTier(e.cfg, body)
 	httpReq, upstreamBody, err := e.cacheHelper(ctx, from, url, req, body, opts.Headers)
 	if err != nil {
 		return nil, err
@@ -140,6 +141,42 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 			helps.RecordAPIResponseError(ctx, e.cfg, readErr)
 			return nil, readErr
 		}
+		if helps.IsUnsupportedReasoningParamError(httpResp.StatusCode, data) {
+			// Some upstreams reject the whole payload on reasoning parameters, so
+			// drop them and replay once before surfacing the error.
+			stripped := helps.StripReasoningEffortParameters(body)
+			if !bytes.Equal(stripped, body) {
+				retryResp, errRetry := e.replayCodexRequest(ctx, auth, from, url, req, opts, stripped, httpClient, nil)
+				if errRetry != nil {
+					return nil, errRetry
+				}
+				if retryResp.StatusCode >= 200 && retryResp.StatusCode < 300 {
+					httpResp = retryResp
+					goto codexStreamReadSuccess
+				}
+				retryBody, readErrRetry := io.ReadAll(retryResp.Body)
+				if errCloseRetry := retryResp.Body.Close(); errCloseRetry != nil {
+					log.Errorf("codex executor: close response body error: %v", errCloseRetry)
+				}
+				if readErrRetry != nil {
+					helps.RecordAPIResponseError(ctx, e.cfg, readErrRetry)
+					return nil, readErrRetry
+				}
+				helps.AppendAPIResponseChunk(ctx, e.cfg, retryBody)
+				return nil, newCodexStatusErrWithCooling(retryResp.StatusCode, retryBody, e.modelLevelCooling())
+			}
+		}
+		if isCodexTokenInvalidatedResponse(httpResp.StatusCode, data) {
+			retryResp, retryAuth, retried, errRetry := e.retryAfterCodexTokenInvalidated(ctx, auth, from, "/responses", req, opts, body, httpClient, nil)
+			if errRetry != nil {
+				return nil, errRetry
+			}
+			if retried {
+				auth = retryAuth
+				httpResp = retryResp
+				goto codexStreamReadSuccess
+			}
+		}
 		if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, httpResp.StatusCode, data); errClearReplay != nil {
 			return nil, errClearReplay
 		}
@@ -149,6 +186,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 		return nil, err
 	}
 
+codexStreamReadSuccess:
 	buffering := e.cfg != nil && e.cfg.Codex.StreamBootstrapBuffering
 	var bootstrapTimeout time.Duration
 	var bootstrapStart time.Time

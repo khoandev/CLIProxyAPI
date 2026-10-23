@@ -125,6 +125,46 @@ func readStreamBootstrap(ctx context.Context, ch <-chan cliproxyexecutor.StreamC
 		}
 	}
 }
+func streamChunksHaveMarker(chunks []cliproxyexecutor.StreamChunk) (string, bool) {
+	var sb strings.Builder
+	for _, c := range chunks {
+		if len(c.Payload) > 0 {
+			sb.Write(c.Payload)
+		}
+		if c.Err != nil && hasUpstreamTimeoutMarker(c.Err.Error()) {
+			return c.Err.Error(), true
+		}
+	}
+	fullText := sb.String()
+	if hasUpstreamTimeoutMarker(fullText) {
+		return fullText, true
+	}
+	return "", false
+}
+
+// peekStreamForTimeoutMarker non-blockingly drains items already queued in ch
+// and appends them to buffered. It stops as soon as a non-error chunk is found
+// so that real-data streams are not consumed. The updated buffered slice and
+// any remaining unconsumed channel are returned. closed is true when ch was
+// fully drained and closed.
+func peekStreamForTimeoutMarker(buffered []cliproxyexecutor.StreamChunk, ch <-chan cliproxyexecutor.StreamChunk) (newBuffered []cliproxyexecutor.StreamChunk, remaining <-chan cliproxyexecutor.StreamChunk, closed bool) {
+	for {
+		select {
+		case chunk, ok := <-ch:
+			if !ok {
+				return buffered, ch, true
+			}
+			buffered = append(buffered, chunk)
+			if chunk.Err == nil && len(chunk.Payload) > 0 {
+				// Real data arrived; stop peeking.
+				return buffered, ch, false
+			}
+		default:
+			// No item immediately available; stop non-blocking peek.
+			return buffered, ch, false
+		}
+	}
+}
 
 // recordCanceledUpstreamCooldown keeps an upstream-confirmed cooldown (an error carrying
 // RetryAfter) when the request context was canceled while the executor was returning, for
@@ -459,6 +499,25 @@ func (m *Manager) executeStreamWithModelPool(ctx context.Context, executor Provi
 			discardStreamChunks(streamResult.Chunks)
 			currentErr := newStreamBootstrapError(bootstrapErr, streamResult.Headers)
 			return nil, preferredExecutionAttemptError(currentErr, upstreamErr)
+		}
+		// Non-blocking peek: if a timeout error is already queued immediately after
+		// the bootstrap chunk(s), drain it into buffered so streamChunksHaveMarker
+		// can detect the marker and trigger a retry rather than forwarding partial
+		// output to the caller.
+		if !closed {
+			buffered, _, closed = peekStreamForTimeoutMarker(buffered, streamResult.Chunks)
+		}
+		if markerText, hasMarker := streamChunksHaveMarker(buffered); hasMarker {
+			errTimeout := newUpstreamTimeoutError(markerText)
+			rerr := resultErrorFromError(errTimeout)
+			result := Result{AuthID: auth.ID, Provider: provider, Model: resultModel, Success: false, Error: rerr}
+			result.RetryAfter = retryAfterFromError(errTimeout)
+			m.recordExecutionResult(ctx, result, auth, ephemeralResult)
+			if idx < len(execModels)-1 {
+				lastErr = errTimeout
+				continue
+			}
+			return nil, newStreamBootstrapError(errTimeout, streamResult.Headers)
 		}
 
 		if closed && len(buffered) == 0 {

@@ -756,9 +756,52 @@ func TestConfigSynthesizer_OpenAICompat(t *testing.T) {
 					if v, ok := auths[i].Metadata["disable_cooling"].(bool); !ok || !v {
 						t.Fatalf("expected auth[%d].disable_cooling=true, got %v", i, auths[i].Metadata["disable_cooling"])
 					}
+					if _, ok := auths[i].Attributes["force_balance"]; ok {
+						t.Fatalf("expected force_balance attribute absent when ForceBalance=false, got %q", auths[i].Attributes["force_balance"])
+					}
 				}
 			}
 		})
+	}
+}
+
+func TestConfigSynthesizer_OpenAICompat_ForceBalance(t *testing.T) {
+	synth := NewConfigSynthesizer()
+	ctx := &SynthesisContext{
+		Config: &config.Config{
+			OpenAICompatibility: []config.OpenAICompatibility{
+				{
+					Name:         "BalancedProvider",
+					BaseURL:      "https://balanced.api.com",
+					ForceBalance: true,
+					APIKeyEntries: []config.OpenAICompatibilityAPIKey{
+						{APIKey: "key-a"},
+						{APIKey: "key-b"},
+					},
+				},
+				{
+					Name:    "FallbackForce",
+					BaseURL: "https://fallback.api.com",
+					// no APIKeyEntries — fallback path
+					ForceBalance: true,
+				},
+			},
+		},
+		Now:         time.Now(),
+		IDGenerator: NewStableIDGenerator(),
+	}
+
+	auths, err := synth.Synthesize(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(auths) != 3 {
+		t.Fatalf("expected 3 auths, got %d", len(auths))
+	}
+	for i, a := range auths {
+		if a.Attributes["force_balance"] != "true" {
+			t.Fatalf("auth[%d] force_balance = %q, want %q", i, a.Attributes["force_balance"], "true")
+		}
 	}
 }
 

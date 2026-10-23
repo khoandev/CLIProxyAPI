@@ -91,14 +91,45 @@ func (e *XAIExecutor) executeVideos(ctx context.Context, auth *cliproxyauth.Auth
 	endpointPath := xaiVideosGenerationsPath
 	var body io.Reader = bytes.NewReader(payload)
 
-	switch path := xaiVideoEndpointPath(opts); path {
-	case xaiVideosGenerationsPath, xaiVideosEditsPath, xaiVideosExtensionsPath:
-		endpointPath = path
+	action, videoID, characterID := xaiVideoAction(opts, payload)
+	switch action {
+	case xaiVideoActionGet:
+		method = http.MethodGet
+		body = nil
+		if videoID := strings.TrimSpace(gjson.GetBytes(payload, "request_id").String()); videoID != "" {
+			// GET /videos/:id — retrieve single video
+			endpointPath = xaiVideosPath + "/" + url.PathEscape(videoID)
+		} else {
+			// GET /videos — list (query params forwarded via opts.Query)
+			endpointPath = xaiVideosPath
+		}
+	case xaiVideoActionDelete:
+		method = http.MethodDelete
+		body = nil
+		if videoID != "" {
+			endpointPath = xaiVideosPath + "/" + url.PathEscape(videoID)
+		}
+	case xaiVideoActionRemix:
+		if videoID != "" {
+			endpointPath = xaiVideosPath + "/" + url.PathEscape(videoID) + "/remix"
+		}
+	case xaiVideoActionGetCharacter:
+		method = http.MethodGet
+		body = nil
+		if characterID != "" {
+			endpointPath = xaiVideosCharactersPath + "/" + url.PathEscape(characterID)
+		}
 	default:
-		if requestID := strings.TrimSpace(gjson.GetBytes(payload, "request_id").String()); requestID != "" {
-			method = http.MethodGet
-			endpointPath = xaiVideosPath + "/" + url.PathEscape(requestID)
-			body = nil
+		switch path := xaiVideoEndpointPath(opts); path {
+		case xaiVideosGenerationsPath, xaiVideosEditsPath, xaiVideosExtensionsPath, xaiVideosCharactersPath:
+			endpointPath = path
+		default:
+			// Legacy: GET by request_id embedded in payload
+			if requestID := strings.TrimSpace(gjson.GetBytes(payload, "request_id").String()); requestID != "" {
+				method = http.MethodGet
+				endpointPath = xaiVideosPath + "/" + url.PathEscape(requestID)
+				body = nil
+			}
 		}
 	}
 	if body != nil {

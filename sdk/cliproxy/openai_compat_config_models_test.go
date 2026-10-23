@@ -4,8 +4,9 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 )
+
+func boolPtrCC(b bool) *bool { return &b }
 
 func TestBuildOpenAICompatibilityConfigModels_InputModalities(t *testing.T) {
 	compat := &config.OpenAICompatibility{
@@ -20,7 +21,7 @@ func TestBuildOpenAICompatibilityConfigModels_InputModalities(t *testing.T) {
 			{
 				Name:  "upstream-image",
 				Alias: "compat-image",
-				Image: true,
+				Image: boolPtrCC(true),
 			},
 		},
 	}
@@ -58,8 +59,12 @@ func TestBuildOpenAICompatibilityConfigModels_InputModalities(t *testing.T) {
 	if imageModel.DisplayName != "compat-image" {
 		t.Fatalf("image DisplayName = %q, want compat-image", imageModel.DisplayName)
 	}
-	if imageModel.Type != registry.OpenAIImageModelType {
-		t.Fatalf("image model type = %q, want %q", imageModel.Type, registry.OpenAIImageModelType)
+	// Image: true means image endpoints are enabled (not disabled) — type stays openai-compatibility.
+	if imageModel.Type != "openai-compatibility" {
+		t.Fatalf("image model type = %q, want openai-compatibility", imageModel.Type)
+	}
+	if imageModel.ImageDisabled {
+		t.Fatal("image model should not have ImageDisabled set when Image: true")
 	}
 	if len(imageModel.SupportedInputModalities) != 0 {
 		t.Fatalf("image model input modalities = %+v, want none", imageModel.SupportedInputModalities)

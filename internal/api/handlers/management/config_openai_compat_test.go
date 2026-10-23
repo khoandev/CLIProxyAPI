@@ -65,3 +65,47 @@ func TestGetOpenAICompatIncludesDisableCooling(t *testing.T) {
 		t.Fatalf("expected request-retry to be present and 0, got %#v", body.OpenAICompatibility[0].RequestRetry)
 	}
 }
+
+func TestGetOpenAICompatIncludesForceBalance(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{
+		OpenAICompatibility: []config.OpenAICompatibility{
+			{
+				Name:    "Balanced",
+				BaseURL: "https://example.com/v1",
+				APIKeyEntries: []config.OpenAICompatibilityAPIKey{
+					{APIKey: "test-key"},
+				},
+				Models: []config.OpenAICompatibilityModel{
+					{Name: "gpt-x", Alias: "gpt-x"},
+				},
+				ForceBalance: true,
+			},
+		},
+	}, nil)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v0/management/openai-compatibility", nil)
+	h.GetOpenAICompat(ctx)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		OpenAICompatibility []struct {
+			ForceBalance *bool `json:"force-balance"`
+		} `json:"openai-compatibility"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(body.OpenAICompatibility) != 1 {
+		t.Fatalf("expected 1 openai-compatibility entry, got %d", len(body.OpenAICompatibility))
+	}
+	if body.OpenAICompatibility[0].ForceBalance == nil || !*body.OpenAICompatibility[0].ForceBalance {
+		t.Fatalf("expected force-balance to be present and true, got %#v", body.OpenAICompatibility[0].ForceBalance)
+	}
+}

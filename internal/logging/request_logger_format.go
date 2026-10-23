@@ -244,26 +244,6 @@ func inferUpstreamTransport(apiRequest []byte, apiRequestSource *FileBodySource,
 	}
 }
 
-func writeLogPart(w io.Writer, payload []byte, prependNewline bool) error {
-	if w == nil {
-		return nil
-	}
-	if prependNewline {
-		if _, errWrite := io.WriteString(w, "\n"); errWrite != nil {
-			return errWrite
-		}
-	}
-	if _, errWrite := w.Write(payload); errWrite != nil {
-		return errWrite
-	}
-	if !bytes.HasSuffix(payload, []byte("\n")) {
-		if _, errWrite := io.WriteString(w, "\n"); errWrite != nil {
-			return errWrite
-		}
-	}
-	return nil
-}
-
 func writeAPISection(w io.Writer, sectionHeader string, sectionPrefix string, payload []byte, timestamp time.Time) error {
 	if len(payload) == 0 {
 		return nil

@@ -196,6 +196,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.loggerToggle = toggle
 
 	engine.Use(corsMiddleware())
+	// Masking runs last so its response writer wraps every other middleware's
+	// output, sanitizing every third-party brand on all responses.
+	engine.Use(middleware.MaskingMiddleware())
+	s.handlers.SetQuotaExceededBehavior(cfg.QuotaExceeded)
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	s.exampleAPIKeySafeModeActive.Store(s.exampleAPIKeySafeModeRequired(cfg))
 	s.handlers.SetPluginHost(optionState.pluginHost)

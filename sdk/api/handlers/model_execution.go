@@ -25,6 +25,9 @@ type modelExecutionOptions struct {
 	SkipRouterPluginID      string
 	ForcedProvider          string
 	AuthSelectionModel      string
+	Method                  string
+	RequestPath             string
+	AllowVideoModel         bool
 	ProxyURL                string
 	Path                    string
 	AllowSpeechModel        bool
@@ -99,6 +102,28 @@ func (e *ModelExecutionStreamError) Error() string {
 		return e.Message
 	}
 	return http.StatusText(e.StatusCode)
+}
+
+// ExecuteOpenAICompatPassthrough proxies provider-specific OpenAI-compatible HTTP endpoints.
+func (h *BaseAPIHandler) ExecuteOpenAICompatPassthrough(ctx context.Context, modelName string, rawJSON []byte, method, requestPath string, headers http.Header, query url.Values) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	return h.executeWithAuthManagerFormats(ctx, "openai", "openai", modelName, rawJSON, "", false, modelExecutionOptions{
+		Method:             method,
+		RequestPath:        requestPath,
+		Headers:            headers,
+		Query:              query,
+		AuthSelectionModel: modelName,
+	})
+}
+
+// ExecuteOpenAICompatPassthroughStream proxies streaming OpenAI-compatible provider endpoints.
+func (h *BaseAPIHandler) ExecuteOpenAICompatPassthroughStream(ctx context.Context, modelName string, rawJSON []byte, method, requestPath string, headers http.Header, query url.Values) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
+	return h.executeStreamWithAuthManagerFormats(ctx, "openai", "openai", modelName, rawJSON, "", false, modelExecutionOptions{
+		Method:             method,
+		RequestPath:        requestPath,
+		Headers:            headers,
+		Query:              query,
+		AuthSelectionModel: modelName,
+	})
 }
 
 // ExecuteModel executes an internal non-streaming model request.
@@ -302,18 +327,22 @@ func receiveInitialModelExecutionChunk(ctx context.Context, dataChan <-chan []by
 	if ctx != nil {
 		done = ctx.Done()
 	}
-	for dataChan != nil || errChan != nil {
+	if dataChan != nil {
 		select {
 		case payload, ok := <-dataChan:
-			if !ok {
-				dataChan = nil
-				continue
+			if ok {
+				return []ModelExecutionChunk{{Payload: cloneBytes(payload)}}, dataChan, errChan, nil
 			}
-			return []ModelExecutionChunk{{Payload: cloneBytes(payload)}}, dataChan, errChan, nil
+			dataChan = nil
+		case <-done:
+			return nil, dataChan, errChan, nil
+		}
+	}
+	if errChan != nil {
+		select {
 		case errMsg, ok := <-errChan:
 			if !ok {
-				errChan = nil
-				continue
+				return nil, dataChan, nil, nil
 			}
 			if errMsg != nil {
 				return nil, dataChan, errChan, errMsg

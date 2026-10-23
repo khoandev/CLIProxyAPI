@@ -78,6 +78,12 @@ func GetProviderName(modelName string) []string {
 	return providers
 }
 
+// GetAllProviderNames returns the names of all providers that have at least one registered model.
+// Used as a fallback when a video endpoint is called without a model name.
+func GetAllProviderNames() []string {
+	return registry.GetGlobalRegistry().GetAllProviders()
+}
+
 // ResolveAutoModel resolves the "auto" model name to an actual available model.
 // It uses an empty handler type to get any available model from the registry.
 //

@@ -271,6 +271,42 @@ func TestEnsureImageGenerationTool_GPT53CodexSparkDoesNotInjectTool(t *testing.T
 	}
 }
 
+func TestEnsureImageGenerationTool_MuseSparkVersionedDoesNotInjectTool(t *testing.T) {
+	body := []byte(`{"model":"muse-spark-1.2","input":"draw a cat"}`)
+	result := ensureImageGenerationTool(body, "muse-spark-1.2", nil, nil)
+
+	if string(result) != string(body) {
+		t.Fatalf("expected body to be unchanged, got %s", string(result))
+	}
+	if gjson.GetBytes(result, "tools").Exists() {
+		t.Fatalf("expected no tools for muse-spark-1.2, got %s", gjson.GetBytes(result, "tools").Raw)
+	}
+}
+
+func TestEnsureImageGenerationTool_MuseSparkContributorDoesNotInjectTool(t *testing.T) {
+	body := []byte(`{"model":"muse-spark-1.3-contributor","input":"hello"}`)
+	result := ensureImageGenerationTool(body, "muse-spark-1.3-contributor", nil, nil)
+
+	if string(result) != string(body) {
+		t.Fatalf("expected body to be unchanged, got %s", string(result))
+	}
+	if gjson.GetBytes(result, "tools").Exists() {
+		t.Fatalf("expected no tools for muse-spark-1.3-contributor, got %s", gjson.GetBytes(result, "tools").Raw)
+	}
+}
+
+func TestEnsureImageGenerationTool_MuseSparkNamespacedDoesNotInjectTool(t *testing.T) {
+	body := []byte(`{"model":"oc/muse-spark-1.3-contributor","input":"hello"}`)
+	result := ensureImageGenerationTool(body, "oc/muse-spark-1.3-contributor", nil, nil)
+
+	if string(result) != string(body) {
+		t.Fatalf("expected body to be unchanged, got %s", string(result))
+	}
+	if gjson.GetBytes(result, "tools").Exists() {
+		t.Fatalf("expected no tools for oc/muse-spark-1.3-contributor, got %s", gjson.GetBytes(result, "tools").Raw)
+	}
+}
+
 func TestEnsureImageGenerationTool_FreeCodexAuthDoesNotInjectTool(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"draw a cat"}`)
 	freeAuth := &cliproxyauth.Auth{

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 )
 
 // MaxRequestBodyBytesContextKey stores the configured request body size limit (in bytes) on the Gin context.
@@ -24,7 +25,7 @@ func ReadRequestBody(c *gin.Context) ([]byte, error) {
 	if c != nil {
 		maxBytes = c.GetInt64(MaxRequestBodyBytesContextKey)
 	}
-	raw, err := c.GetRawData()
+	raw, err := util.SharedRequestBody(c)
 	if err != nil {
 		return nil, err
 	}

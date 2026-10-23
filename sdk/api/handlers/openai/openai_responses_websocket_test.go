@@ -2695,7 +2695,7 @@ func TestShouldExposeResponsesUpstreamError(t *testing.T) {
 		want   bool
 	}{
 		{status: http.StatusBadRequest, want: true},
-		{status: http.StatusConflict, want: true},
+		{status: http.StatusConflict, want: false},
 		{status: http.StatusRequestEntityTooLarge, want: true},
 		{status: http.StatusUnprocessableEntity, want: true},
 		{status: http.StatusUnauthorized},
@@ -2726,7 +2726,7 @@ func TestResponsesUpstreamErrorBodyDrivesExposure(t *testing.T) {
 		want   bool
 	}{
 		{name: "bad request", status: http.StatusBadRequest, body: "bad request", want: true},
-		{name: "conflict", status: http.StatusConflict, body: "conflict", want: true},
+		{name: "conflict", status: http.StatusConflict, body: "conflict", want: false},
 		{name: "entity too large", status: http.StatusRequestEntityTooLarge, body: "too large", want: true},
 		{name: "unprocessable", status: http.StatusUnprocessableEntity, body: "unprocessable", want: true},
 		{
@@ -7974,5 +7974,61 @@ func TestResponsesWebsocketReauthorizesEachTurnAndKeepsSocketOpen(t *testing.T) 
 		if val := turnReq.Header.Get(dropped); val != "" {
 			t.Fatalf("per-turn auth request kept handshake header %s = %q", dropped, val)
 		}
+		}
+	}
+}
+
+func TestResponsesWebsocketAuthSupportsCompactionReplay_OpenAICompatibilityAttr(t *testing.T) {
+	auth := &coreauth.Auth{
+		Provider: "openai-compatibility",
+		Attributes: map[string]string{
+			"responses_compaction": "true",
+		},
+	}
+	if !responsesWebsocketAuthSupportsCompactionReplay(auth) {
+		t.Fatal("expected openai-compatibility with responses_compaction=true to support compaction replay")
+	}
+}
+
+func TestResponsesWebsocketAuthSupportsCompactionReplay_OpenAICompatibilityAttrFalse(t *testing.T) {
+	auth := &coreauth.Auth{
+		Provider: "openai-compatibility",
+		Attributes: map[string]string{
+			"responses_compaction": "false",
+		},
+	}
+	if responsesWebsocketAuthSupportsCompactionReplay(auth) {
+		t.Fatal("expected openai-compatibility with responses_compaction=false to NOT support compaction replay")
+	}
+}
+
+func TestResponsesWebsocketAuthSupportsCompactionReplay_OpenAICompatibilityNoAttr(t *testing.T) {
+	auth := &coreauth.Auth{
+		Provider:   "openai-compatibility",
+		Attributes: map[string]string{},
+	}
+	if responsesWebsocketAuthSupportsCompactionReplay(auth) {
+		t.Fatal("expected openai-compatibility without attr to NOT support compaction replay")
+	}
+}
+
+func TestWebsocketUpstreamSupportsIncrementalInput_ResponsesWebsocketAttr(t *testing.T) {
+	attrs := map[string]string{"responses_websocket": "true"}
+	if !websocketUpstreamSupportsIncrementalInput(attrs, nil) {
+		t.Fatal("expected responses_websocket=true to enable incremental input")
+	}
+}
+
+func TestWebsocketUpstreamSupportsIncrementalInput_ResponsesWebsocketAttrFalse(t *testing.T) {
+	attrs := map[string]string{"responses_websocket": "false"}
+	if websocketUpstreamSupportsIncrementalInput(attrs, nil) {
+		t.Fatal("expected responses_websocket=false to disable incremental input")
+	}
+}
+
+func TestWebsocketUpstreamSupportsIncrementalInput_LegacyWebsocketsFallback(t *testing.T) {
+	attrs := map[string]string{"websockets": "true"}
+	if !websocketUpstreamSupportsIncrementalInput(attrs, nil) {
+		t.Fatal("expected legacy websockets=true to still enable incremental input")
 	}
 }

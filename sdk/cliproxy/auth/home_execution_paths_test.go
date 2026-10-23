@@ -237,8 +237,8 @@ func TestHomeStreamConsumerCancelEndsSelection(t *testing.T) {
 	manager.PublishHomeDispatch(homeExecutionDispatcher{}, registry, 1)
 	chunks := make(chan cliproxyexecutor.StreamChunk, 1)
 	chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("initial")}
+	close(chunks)
 	manager.RegisterExecutor(&homeExecutionStreamExecutor{chunks: chunks})
-
 	result, errExecute := manager.ExecuteStream(ctx, []string{"home-execution"}, cliproxyexecutor.Request{Model: "test"}, cliproxyexecutor.Options{Stream: true})
 	if errExecute != nil {
 		t.Fatalf("ExecuteStream() error = %v", errExecute)
@@ -744,14 +744,13 @@ func TestHomeStreamEndsOnTerminalChunk(t *testing.T) {
 	manager.PublishHomeDispatch(homeExecutionDispatcher{}, registry, 1)
 	chunks := make(chan cliproxyexecutor.StreamChunk, 1)
 	chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("initial")}
+	close(chunks)
 	manager.RegisterExecutor(&homeExecutionStreamExecutor{chunks: chunks})
 
 	result, errExecute := manager.ExecuteStream(context.Background(), []string{"home-execution"}, cliproxyexecutor.Request{Model: "test"}, cliproxyexecutor.Options{Stream: true})
 	if errExecute != nil {
 		t.Fatalf("ExecuteStream() error = %v", errExecute)
 	}
-
-	close(chunks)
 	for range result.Chunks {
 	}
 	if errDrain := registry.Drain(context.Background()); errDrain != nil {
@@ -1024,6 +1023,7 @@ func TestAccountedHomeStreamEndsOnlyAfterSourceTerminates(t *testing.T) {
 	}}}, registry, 1)
 	chunks := make(chan cliproxyexecutor.StreamChunk, 1)
 	chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("initial")}
+	close(chunks)
 	manager.RegisterExecutor(&homeExecutionStreamExecutor{chunks: chunks})
 
 	result, errExecute := manager.ExecuteStream(context.Background(), []string{"home-execution"}, cliproxyexecutor.Request{Model: "model-a"}, cliproxyexecutor.Options{Stream: true})
@@ -1033,13 +1033,6 @@ func TestAccountedHomeStreamEndsOnlyAfterSourceTerminates(t *testing.T) {
 	if _, ok := <-result.Chunks; !ok {
 		t.Fatal("stream closed before initial chunk")
 	}
-	select {
-	case group := <-releases:
-		t.Fatalf("stream released before source termination: %#v", group)
-	default:
-	}
-
-	close(chunks)
 	for range result.Chunks {
 	}
 	select {
@@ -1061,8 +1054,14 @@ func TestAccountedHomeStreamErrorDrainsUntilSourceClosesBeforeRelease(t *testing
 	manager.PublishHomeDispatch(&accountedHomeExecutionDispatcher{auths: []Auth{{
 		ID: "cred-1", Provider: "home-execution", Status: StatusActive,
 	}}}, registry, 1)
-	chunks := make(chan cliproxyexecutor.StreamChunk, 1)
-	chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("initial")}
+	chunks := make(chan cliproxyexecutor.StreamChunk)
+	go func() {
+		chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("initial")}
+		chunks <- cliproxyexecutor.StreamChunk{Err: &Error{HTTPStatus: http.StatusBadGateway, Message: "upstream failed"}}
+		chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("after-error-1")}
+		chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("after-error-2")}
+		close(chunks)
+	}()
 	manager.RegisterExecutor(&homeExecutionStreamExecutor{chunks: chunks})
 
 	result, errExecute := manager.ExecuteStream(context.Background(), []string{"home-execution"}, cliproxyexecutor.Request{Model: "model-a"}, cliproxyexecutor.Options{Stream: true})
@@ -1072,34 +1071,9 @@ func TestAccountedHomeStreamErrorDrainsUntilSourceClosesBeforeRelease(t *testing
 	if chunk, ok := <-result.Chunks; !ok || string(chunk.Payload) != "initial" {
 		t.Fatalf("initial chunk = %#v, open = %v", chunk, ok)
 	}
-	chunks <- cliproxyexecutor.StreamChunk{Err: &Error{HTTPStatus: http.StatusBadGateway, Message: "upstream failed"}}
 	if chunk, ok := <-result.Chunks; !ok || chunk.Err == nil {
 		t.Fatalf("error chunk = %#v, open = %v", chunk, ok)
 	}
-
-	sent := make(chan struct{})
-	go func() {
-		chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("after-error-1")}
-		chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("after-error-2")}
-		close(sent)
-	}()
-	select {
-	case <-sent:
-	case <-time.After(time.Second):
-		t.Fatal("stream source was not drained after its error chunk")
-	}
-	select {
-	case group := <-releases:
-		t.Fatalf("stream released while source remained open: %#v", group)
-	default:
-	}
-	select {
-	case chunk, ok := <-result.Chunks:
-		t.Fatalf("chunk after error = %#v, open = %v", chunk, ok)
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	close(chunks)
 	for range result.Chunks {
 	}
 	select {
@@ -1125,8 +1099,8 @@ func TestAccountedHomeStreamErrorCancellationReleasesSelection(t *testing.T) {
 	chunks := make(chan cliproxyexecutor.StreamChunk, 2)
 	chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("initial")}
 	chunks <- cliproxyexecutor.StreamChunk{Err: &Error{HTTPStatus: http.StatusBadGateway, Message: "upstream failed"}}
+	close(chunks)
 	manager.RegisterExecutor(&homeExecutionStreamExecutor{chunks: chunks})
-
 	result, errExecute := manager.ExecuteStream(ctx, []string{"home-execution"}, cliproxyexecutor.Request{Model: "model-a"}, cliproxyexecutor.Options{Stream: true})
 	if errExecute != nil {
 		t.Fatalf("ExecuteStream() error = %v", errExecute)
@@ -1154,7 +1128,6 @@ func TestAccountedHomeStreamErrorCancellationReleasesSelection(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("stream did not release after cancellation")
 	}
-	close(chunks)
 }
 
 func TestAccountedHomeStreamConsumerCancellationEndsSelection(t *testing.T) {

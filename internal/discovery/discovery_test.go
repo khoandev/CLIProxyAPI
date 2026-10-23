@@ -522,37 +522,48 @@ func TestAdvertiserAndBrowser_Integration(t *testing.T) {
 		}
 	}()
 
-	browseCtx, browseCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer browseCancel()
-	browser := NewZeroconfBrowser(ifaces...)
-	results, err := browser.Browse(browseCtx, DefaultServiceType, DefaultDomain)
-	if err != nil {
-		t.Fatalf("browse failed: %v", err)
-	}
+	// mDNS delivery is not guaranteed on the first browse window: the responder
+	// may not have finished announcing itself, especially when the machine is
+	// saturated by a parallel test run. Retry across several windows until the
+	// advertised instance shows up.
+	const browseWindow = 2 * time.Second
+	const browseAttempts = 6
 
-	found := false
-	for _, res := range results {
-		if res.InstanceName == "CPA-LiveTest-42" {
-			found = true
-			if res.Port != 54321 {
-				t.Errorf("expected port 54321, got %d", res.Port)
+	browser := NewZeroconfBrowser(ifaces...)
+	var found *DiscoveredService
+	for attempt := 0; attempt < browseAttempts; attempt++ {
+		browseCtx, browseCancel := context.WithTimeout(context.Background(), browseWindow)
+		results, err := browser.Browse(browseCtx, DefaultServiceType, DefaultDomain)
+		browseCancel()
+		if err != nil {
+			t.Fatalf("browse failed: %v", err)
+		}
+		for i := range results {
+			if results[i].InstanceName == "CPA-LiveTest-42" {
+				found = &results[i]
+				break
 			}
-			if res.Product != ProductCPA {
-				t.Errorf("expected product %s, got %s", ProductCPA, res.Product)
-			}
+		}
+		if found != nil {
 			osHost := extractCleanHost() + "." + DefaultDomain
-			if strings.EqualFold(res.Host, osHost) {
-				t.Errorf("expected proxy-specific host instead of OS host %q, got %q", osHost, res.Host)
+			if strings.EqualFold(found.Host, osHost) {
+				t.Errorf("expected proxy-specific host instead of OS host %q, got %q", osHost, found.Host)
 			}
-			if res.Host != "cpa-livetest-42.local." {
-				t.Errorf("expected advertised host cpa-livetest-42.local., got %q", res.Host)
+			if found.Host != "cpa-livetest-42.local." {
+				t.Errorf("expected advertised host cpa-livetest-42.local., got %q", found.Host)
 			}
 			break
 		}
 	}
 
-	if !found {
-		t.Fatalf("advertised instance CPA-LiveTest-42 was not discovered")
+	if found == nil {
+		t.Fatalf("advertised instance CPA-LiveTest-42 was not discovered after %d browse windows of %s", browseAttempts, browseWindow)
+	}
+	if found.Port != 54321 {
+		t.Errorf("expected port 54321, got %d", found.Port)
+	}
+	if found.Product != ProductCPA {
+		t.Errorf("expected product %s, got %s", ProductCPA, found.Product)
 	}
 
 	if errDirect := verifyDirectHostQueryAndGoodbye(t, ifaces, "cpa-livetest-42.local.", adv.Stop); errDirect != nil {

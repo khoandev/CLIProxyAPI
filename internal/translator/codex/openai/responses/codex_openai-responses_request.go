@@ -52,6 +52,7 @@ func ConvertOpenAIResponsesRequestToCodex(modelName string, inputRawJSON []byte,
 	rawJSON = deleteCodexRequestFields(rawJSON, "truncation", "prompt_cache_options", "prompt_cache_retention")
 	rawJSON = stripCodexResponsesCacheBreakpoints(rawJSON)
 	rawJSON = applyResponsesCompactionCompatibility(rawJSON)
+	rawJSON = deleteCodexRequestFields(rawJSON, "reasoning_effort")
 
 	// Delete the user field as it is not supported by the Codex upstream.
 	rawJSON = deleteCodexRequestFields(rawJSON, "user")

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cachecost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
@@ -64,6 +65,7 @@ func (s *Service) Run(ctx context.Context) error {
 		cfg = s.cfg
 		s.cfgMu.Unlock()
 		redisqueue.SetUsageStatisticsEnabled(true)
+		cachecost.SetRatio(s.cfg.CacheHitCostRatioValue())
 	}
 
 	defer func() {

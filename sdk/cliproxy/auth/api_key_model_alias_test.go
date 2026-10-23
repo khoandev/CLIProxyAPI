@@ -210,7 +210,7 @@ func TestResolveAPIKeyModelAliasWithResult_ForceMapping(t *testing.T) {
 			Models: []internalconfig.ClaudeModel{{
 				Name:         "glm-5.2",
 				Alias:        "claude-sonnet-latest",
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			}},
 		}},
 	}
@@ -242,7 +242,7 @@ func TestResolveAPIKeyModelAliasWithResult_SameBasePreservesSuffix(t *testing.T)
 			Models: []internalconfig.GeminiModel{{
 				Name:         "gemini-2.5-pro",
 				Alias:        "gemini-2.5-pro(8192)",
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			}},
 		}},
 	}
@@ -269,7 +269,7 @@ func TestResolveAPIKeyModelAliasWithResult_ForceMappingUsesConfigAliasNotRequest
 			Models: []internalconfig.CodexModel{{
 				Name:         "gpt-5.5",
 				Alias:        "claude-sonnet-4-5",
-				ForceMapping: true,
+				ForceMapping: boolPtr(true),
 			}},
 		}},
 	}

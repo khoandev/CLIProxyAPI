@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
+	log "github.com/sirupsen/logrus"
 )
 
 type homeRequestLogClient interface {
@@ -88,13 +89,15 @@ type homeStreamingLogWriter struct {
 	requestHeaders map[string][]string
 	requestBody    []byte
 
-	chunkChan chan []byte
-	doneChan  chan struct{}
+	// responseSpool accumulates the streamed response body.
+	responseSpool *bodySpool
+
+	// writeErr records the first spool write failure.
+	writeErr error
 
 	responseStatus   int
 	statusWritten    bool
 	responseHeaders  map[string][]string
-	responseBody     bytes.Buffer
 	apiRequest       []byte
 	apiResponse      []byte
 	apiWebsocketTime []byte
@@ -103,7 +106,7 @@ type homeStreamingLogWriter struct {
 	firstChunkTS     time.Time
 }
 
-func newHomeStreamingLogWriter(url, method string, headers map[string][]string, body []byte, requestID string) *homeStreamingLogWriter {
+func newHomeStreamingLogWriter(logsDir, url, method string, headers map[string][]string, body []byte, requestID string) *homeStreamingLogWriter {
 	requestHeaders := make(map[string][]string, len(headers))
 	for key, values := range headers {
 		headerValues := make([]string, len(values))
@@ -118,31 +121,20 @@ func newHomeStreamingLogWriter(url, method string, headers map[string][]string, 
 		requestHeaders: requestHeaders,
 		requestBody:    append([]byte(nil), body...),
 		requestID:      strings.TrimSpace(requestID),
-		chunkChan:      make(chan []byte, 100),
-		doneChan:       make(chan struct{}),
+		responseSpool:  newBodySpool(logsDir, defaultSpoolMemoryLimit),
 	}
 
-	go writer.asyncWriter()
 	return writer
 }
 
-func (w *homeStreamingLogWriter) asyncWriter() {
-	defer close(w.doneChan)
-	for chunk := range w.chunkChan {
-		if len(chunk) == 0 {
-			continue
-		}
-		_, _ = w.responseBody.Write(chunk)
-	}
-}
-
+// WriteChunkAsync spools a response chunk for later forwarding. The spool
+// copies chunk before returning, so the caller may reuse its buffer.
 func (w *homeStreamingLogWriter) WriteChunkAsync(chunk []byte) {
-	if w == nil || w.chunkChan == nil || len(chunk) == 0 {
+	if w == nil || w.responseSpool == nil || len(chunk) == 0 {
 		return
 	}
-	select {
-	case w.chunkChan <- append([]byte(nil), chunk...):
-	default:
+	if _, errWrite := w.responseSpool.Write(chunk); errWrite != nil && w.writeErr == nil {
+		w.writeErr = errWrite
 	}
 }
 
@@ -202,10 +194,9 @@ func (w *homeStreamingLogWriter) Close() error {
 		return nil
 	}
 
-	if w.chunkChan != nil {
-		close(w.chunkChan)
-		<-w.doneChan
-		w.chunkChan = nil
+	defer w.responseSpool.Cleanup()
+	if w.writeErr != nil {
+		return w.writeErr
 	}
 
 	client := currentHomeRequestLogClient()
@@ -213,7 +204,15 @@ func (w *homeStreamingLogWriter) Close() error {
 		return nil
 	}
 
-	responsePayload := w.responseBody.Bytes()
+	responsePayload, errReader := w.responseSpool.Reader()
+	if errReader != nil {
+		return errReader
+	}
+	defer func() {
+		if errClose := responsePayload.Close(); errClose != nil {
+			log.WithError(errClose).Warn("failed to close response body spool")
+		}
+	}()
 
 	var buf bytes.Buffer
 	upstreamTransport := inferUpstreamTransport(w.apiRequest, nil, w.apiResponse, nil, w.apiWebsocketTime, nil, nil)
@@ -229,7 +228,7 @@ func (w *homeStreamingLogWriter) Close() error {
 	if errWrite := writeAPISection(&buf, "=== API RESPONSE ===\n", "=== API RESPONSE", w.apiResponse, w.apiResponseTS); errWrite != nil {
 		return errWrite
 	}
-	if errWrite := writeResponseSection(&buf, w.responseStatus, w.statusWritten, w.responseHeaders, bytes.NewReader(responsePayload), nil, false); errWrite != nil {
+	if errWrite := writeResponseSection(&buf, w.responseStatus, w.statusWritten, w.responseHeaders, responsePayload, nil, false); errWrite != nil {
 		return errWrite
 	}
 

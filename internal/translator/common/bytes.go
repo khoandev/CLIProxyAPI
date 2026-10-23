@@ -55,21 +55,30 @@ func JoinRawArray(items [][]byte) []byte {
 }
 
 // SetRawArrayItems replaces an empty JSON array at path with raw items.
-// The single-item path avoids allocating an intermediate joined array.
+// The items are spliced in place so the document is copied once, no matter how
+// many items there are. A document rewrite per item would copy the whole
+// payload again for each item.
 func SetRawArrayItems(data []byte, path string, items [][]byte) []byte {
 	if len(items) == 0 {
 		return data
 	}
-	if len(items) == 1 {
-		array := gjson.GetBytes(data, path)
-		if array.Raw == "[]" && array.Index >= 0 && array.Index+len(array.Raw) <= len(data) {
-			out := make([]byte, 0, len(data)+len(items[0]))
-			out = append(out, data[:array.Index]...)
-			out = append(out, '[')
-			out = append(out, items[0]...)
-			out = append(out, ']')
-			return append(out, data[array.Index+len(array.Raw):]...)
+	array := gjson.GetBytes(data, path)
+	if array.Raw == "[]" && array.Index >= 0 && array.Index+len(array.Raw) <= len(data) {
+		size := len(items) + 1
+		for _, item := range items {
+			size += len(item)
 		}
+		out := make([]byte, 0, len(data)+size)
+		out = append(out, data[:array.Index]...)
+		out = append(out, '[')
+		for i, item := range items {
+			if i > 0 {
+				out = append(out, ',')
+			}
+			out = append(out, item...)
+		}
+		out = append(out, ']')
+		return append(out, data[array.Index+len(array.Raw):]...)
 	}
 	data, _ = sjson.SetRawBytes(data, path, JoinRawArray(items))
 	return data

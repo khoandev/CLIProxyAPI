@@ -462,7 +462,7 @@ func TestBuildVideosRetrieveAPIResponseFromXAINormalizesNestedError(t *testing.T
 func TestXAIVideoContentURLFromPayload(t *testing.T) {
 	payload := []byte(`{"status":"done","video":{"url":"https://vidgen.x.ai/video.mp4","duration":6}}`)
 
-	got, err := xaiVideoContentURLFromPayload(payload)
+	got, err := xaiVideoContentURLFromPayload(payload, "")
 	if err != nil {
 		t.Fatalf("xaiVideoContentURLFromPayload() error = %v", err)
 	}
@@ -486,7 +486,7 @@ func TestWriteVideoContentFromURL(t *testing.T) {
 
 	base := apihandlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil)
 	handler := NewOpenAIAPIHandler(base)
-	if err := handler.writeVideoContentFromURL(ctx, upstream.URL+"/video.mp4"); err != nil {
+	if err := handler.writeVideoContentFromURL(ctx, "", upstream.URL+"/video.mp4"); err != nil {
 		t.Fatalf("writeVideoContentFromURL() error = %v", err)
 	}
 
@@ -535,11 +535,11 @@ func TestWriteVideoContentFromURLUsesPinnedAuthProxy(t *testing.T) {
 	ctx.Params = gin.Params{{Key: "video_id", Value: "video_123"}}
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/openai/v1/videos/video_123/content", nil)
 
-	if err := handler.writeVideoContentFromURL(ctx, upstream.URL+"/video.mp4"); err != nil {
+	if err := handler.writeVideoContentFromURL(ctx, "video_123", upstream.URL+"/video.mp4"); err != nil {
 		t.Fatalf("writeVideoContentFromURL() error = %v", err)
 	}
 
-	client := handler.videoContentHTTPClient(ctx)
+	client := handler.videoContentHTTPClient(ctx, "video_123")
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", client.Transport)
@@ -564,7 +564,7 @@ func TestWriteVideoContentFromURLFallsBackToGlobalProxy(t *testing.T) {
 	ctx.Params = gin.Params{{Key: "video_id", Value: "video_456"}}
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/openai/v1/videos/video_456/content", nil)
 
-	client := handler.videoContentHTTPClient(ctx)
+	client := handler.videoContentHTTPClient(ctx, "video_456")
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", client.Transport)

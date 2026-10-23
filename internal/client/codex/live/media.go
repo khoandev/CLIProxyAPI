@@ -220,6 +220,8 @@ func newPionAPIWithOptions(relayConfig config.CodexLiveMediaRelayConfig, filterP
 		return nil, fmt.Errorf("register WebRTC interceptors: %w", errRegister)
 	}
 	settingEngine := webrtc.SettingEngine{}
+	// ponytail: include loopback candidates so local peers can always pair.
+	settingEngine.SetIncludeLoopbackCandidate(true)
 	if !loopbackOnly {
 		if relayConfig.UDPPortMin != 0 {
 			if errPorts := settingEngine.SetEphemeralUDPPortRange(relayConfig.UDPPortMin, relayConfig.UDPPortMax); errPorts != nil {
@@ -240,7 +242,7 @@ func newPionAPIWithOptions(relayConfig config.CodexLiveMediaRelayConfig, filterP
 			webrtc.NetworkTypeTCP4,
 			webrtc.NetworkTypeTCP6,
 		})
-		settingEngine.SetIncludeLoopbackCandidate(true)
+		// Loopback already enabled above.
 		settingEngine.SetIPFilter(func(ip net.IP) bool {
 			return ip != nil && ip.IsLoopback()
 		})

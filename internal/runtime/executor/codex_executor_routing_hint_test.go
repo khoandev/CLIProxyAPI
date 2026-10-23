@@ -66,7 +66,11 @@ func TestCodexExecutorRoutingHintCarriesRequestedTier(t *testing.T) {
 	const aliasedClaude = `{"model":"client-alias","max_tokens":64,"speed":"fast","messages":[{"role":"user","content":"hi"}]}`
 
 	cases := []struct {
-		name     string
+		name string
+		// fastTier mirrors the fast-service-tier config flag. It must be enabled for
+		// the priority tier to survive: when the flag is off the executor strips
+		// any service_tier the caller sent.
+		fastTier bool
 		apiKey   bool
 		stream   bool
 		model    string
@@ -74,12 +78,12 @@ func TestCodexExecutorRoutingHintCarriesRequestedTier(t *testing.T) {
 		wantHint string
 		wantTier string
 	}{
-		{name: "oauth stream fast", stream: true, payload: fastClaude, wantHint: "model=gpt-5.5;tier=priority", wantTier: "priority"},
-		{name: "oauth non-stream fast", stream: false, payload: fastClaude, wantHint: "model=gpt-5.5;tier=priority", wantTier: "priority"},
-		{name: "oauth stream alias and thinking suffix", stream: true, model: "gpt-5.5(low)", payload: aliasedClaude, wantHint: "model=gpt-5.5;tier=priority", wantTier: "priority"},
-		{name: "oauth non-stream alias and thinking suffix", model: "gpt-5.5(low)", payload: aliasedClaude, wantHint: "model=gpt-5.5;tier=priority", wantTier: "priority"},
+		{name: "oauth stream fast", fastTier: true, stream: true, payload: fastClaude, wantHint: "model=gpt-5.5;tier=priority", wantTier: "priority"},
+		{name: "oauth non-stream fast", fastTier: true, stream: false, payload: fastClaude, wantHint: "model=gpt-5.5;tier=priority", wantTier: "priority"},
+		{name: "oauth stream alias and thinking suffix", fastTier: true, stream: true, model: "gpt-5.5(low)", payload: aliasedClaude, wantHint: "model=gpt-5.5;tier=priority", wantTier: "priority"},
+		{name: "oauth non-stream alias and thinking suffix", fastTier: true, model: "gpt-5.5(low)", payload: aliasedClaude, wantHint: "model=gpt-5.5;tier=priority", wantTier: "priority"},
 		{name: "oauth stream standard", stream: true, payload: plainClaude, wantHint: "model=gpt-5.5"},
-		{name: "api key keeps body tier without hint", apiKey: true, stream: true, payload: fastClaude, wantTier: "priority"},
+		{name: "api key keeps body tier without hint", fastTier: true, apiKey: true, stream: true, payload: fastClaude, wantTier: "priority"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,7 +95,7 @@ func TestCodexExecutorRoutingHintCarriesRequestedTier(t *testing.T) {
 			if tc.apiKey {
 				auth = codexAPIKeyTestAuth(server.URL)
 			}
-			executor := NewCodexExecutor(&config.Config{})
+			executor := NewCodexExecutor(&config.Config{FastServiceTier: tc.fastTier})
 			model := tc.model
 			if model == "" {
 				model = "gpt-5.5"

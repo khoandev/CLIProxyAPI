@@ -93,7 +93,7 @@ func SummarizeCodexModels(models []config.CodexModel) CodexModelsSummary {
 				continue
 			}
 			forceMapping := "false"
-			if model.ForceMapping {
+			if model.GetForceMapping() {
 				forceMapping = "true"
 			}
 			isCompat := "false"

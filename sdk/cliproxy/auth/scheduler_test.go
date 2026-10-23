@@ -367,6 +367,62 @@ func TestSchedulerPick_FillFirstSticksToFirstReady(t *testing.T) {
 	}
 }
 
+func TestSchedulerPick_FillFirstForceBalanceRoundsRobin(t *testing.T) {
+	t.Parallel()
+
+	forceAttrs := map[string]string{"force_balance": "true"}
+	scheduler := newSchedulerForTest(
+		&FillFirstSelector{},
+		&Auth{ID: "b", Provider: "gemini", Attributes: forceAttrs},
+		&Auth{ID: "a", Provider: "gemini", Attributes: forceAttrs},
+		&Auth{ID: "c", Provider: "gemini", Attributes: forceAttrs},
+	)
+
+	// Without force-balance fill-first always returns sorted first ("a").
+	// With override, ready view RR should cycle a,b,c.
+	want := []string{"a", "b", "c"}
+	for index, wantID := range want {
+		got, errPick := scheduler.pickSingle(context.Background(), "gemini", "", cliproxyexecutor.Options{}, nil)
+		if errPick != nil {
+			t.Fatalf("pickSingle() #%d error = %v", index, errPick)
+		}
+		if got == nil {
+			t.Fatalf("pickSingle() #%d auth = nil", index)
+		}
+		if got.ID != wantID {
+			t.Fatalf("pickSingle() #%d auth.ID = %q, want %q", index, got.ID, wantID)
+		}
+	}
+}
+
+func TestSchedulerPick_FillFirstForceBalancePinWins(t *testing.T) {
+	t.Parallel()
+
+	forceAttrs := map[string]string{"force_balance": "true"}
+	scheduler := newSchedulerForTest(
+		&FillFirstSelector{},
+		&Auth{ID: "b", Provider: "gemini", Attributes: forceAttrs},
+		&Auth{ID: "a", Provider: "gemini", Attributes: forceAttrs},
+		&Auth{ID: "c", Provider: "gemini", Attributes: forceAttrs},
+	)
+
+	opts := cliproxyexecutor.Options{
+		Metadata: map[string]any{cliproxyexecutor.PinnedAuthMetadataKey: "c"},
+	}
+	for index := 0; index < 3; index++ {
+		got, errPick := scheduler.pickSingle(context.Background(), "gemini", "", opts, nil)
+		if errPick != nil {
+			t.Fatalf("pickSingle() #%d error = %v", index, errPick)
+		}
+		if got == nil {
+			t.Fatalf("pickSingle() #%d auth = nil", index)
+		}
+		if got.ID != "c" {
+			t.Fatalf("pickSingle() #%d auth.ID = %q, want pinned %q", index, got.ID, "c")
+		}
+	}
+}
+
 func TestSchedulerPick_PromotesExpiredCooldownBeforePick(t *testing.T) {
 	t.Parallel()
 
@@ -2437,6 +2493,235 @@ func TestManager_SchedulerTracksMarkResultCooldownAndRecovery(t *testing.T) {
 	if len(seen) != 2 {
 		t.Fatalf("len(seen) = %d, want %d", len(seen), 2)
 	}
+}
+
+// TestSchedulerPick_BackupPriorityLastResort verifies that priority=-1 credentials are only
+// selected after all non-backup (priority >= 0) credentials have been exhausted.
+func TestSchedulerPick_BackupPriorityLastResort(t *testing.T) {
+	t.Parallel()
+
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{ID: "normal-a", Provider: "gemini", Attributes: map[string]string{"priority": "0"}},
+		&Auth{ID: "normal-b", Provider: "gemini", Attributes: map[string]string{"priority": "1"}},
+		&Auth{ID: "backup", Provider: "gemini", Attributes: map[string]string{"priority": "-1"}},
+	)
+
+	// Lần 1-3: chỉ normal credentials được pick (priority 1 rồi 0), backup không bao giờ được chọn
+	// khi vẫn còn non-backup credentials
+	for index := 0; index < 3; index++ {
+		got, errPick := scheduler.pickSingle(context.Background(), "gemini", "", cliproxyexecutor.Options{}, nil)
+		if errPick != nil {
+			t.Fatalf("pickSingle() #%d error = %v", index, errPick)
+		}
+		if got == nil {
+			t.Fatalf("pickSingle() #%d auth = nil", index)
+		}
+		if got.ID == "backup" {
+			t.Fatalf("pickSingle() #%d picked backup auth before all non-backup auths were tried", index)
+		}
+	}
+
+	// Khi tất cả non-backup đã bị đưa vào tried, backup mới được chọn
+	tried := map[string]struct{}{"normal-a": {}, "normal-b": {}}
+	got, errPick := scheduler.pickSingle(context.Background(), "gemini", "", cliproxyexecutor.Options{}, tried)
+	if errPick != nil {
+		t.Fatalf("pickSingle() with all non-backup tried: error = %v", errPick)
+	}
+	if got == nil {
+		t.Fatalf("pickSingle() with all non-backup tried: auth = nil, want backup")
+	}
+	if got.ID != "backup" {
+		t.Fatalf("pickSingle() with all non-backup tried: auth.ID = %q, want backup", got.ID)
+	}
+}
+
+// TestSchedulerPick_BackupPriorityNotPickedWhenNonBackupAvailable verifies that a
+// priority=-1 credential is never chosen while any non-backup credential is still eligible.
+func TestSchedulerPick_BackupPriorityNotPickedWhenNonBackupAvailable(t *testing.T) {
+	t.Parallel()
+
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{ID: "normal", Provider: "gemini", Attributes: map[string]string{"priority": "0"}},
+		&Auth{ID: "backup", Provider: "gemini", Attributes: map[string]string{"priority": "-1"}},
+	)
+
+	for index := 0; index < 5; index++ {
+		got, errPick := scheduler.pickSingle(context.Background(), "gemini", "", cliproxyexecutor.Options{}, nil)
+		if errPick != nil {
+			t.Fatalf("pickSingle() #%d error = %v", index, errPick)
+		}
+		if got == nil || got.ID != "normal" {
+			t.Fatalf("pickSingle() #%d auth.ID = %q, want normal", index, got.ID)
+		}
+	}
+}
+
+// TestSchedulerPick_BackupPriorityPickedWhenAllNonBackupCoolingDown verifies that a
+// priority=-1 credential is selected when all non-backup credentials are in cooldown.
+func TestSchedulerPick_BackupPriorityPickedWhenAllNonBackupCoolingDown(t *testing.T) {
+	t.Parallel()
+
+	model := "test-model"
+	registerSchedulerModels(t, "gemini", model, "normal", "backup-auth")
+
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{
+			ID:         "normal",
+			Provider:   "gemini",
+			Attributes: map[string]string{"priority": "0"},
+			ModelStates: map[string]*ModelState{
+				model: {
+					Status:         StatusError,
+					Unavailable:    true,
+					NextRetryAfter: time.Now().Add(10 * time.Minute),
+				},
+			},
+		},
+		&Auth{ID: "backup-auth", Provider: "gemini", Attributes: map[string]string{"priority": "-1"}},
+	)
+
+	got, errPick := scheduler.pickSingle(context.Background(), "gemini", model, cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("pickSingle() error = %v", errPick)
+	}
+	if got == nil || got.ID != "backup-auth" {
+		t.Fatalf("pickSingle() auth.ID = %q, want backup-auth", got.ID)
+	}
+}
+
+// TestSchedulerPick_MixedBackupPriorityLastResort verifies that priority=-1 credentials
+// in a mixed-provider scenario are only selected after all non-backup credentials are tried.
+func TestSchedulerPick_MixedBackupPriorityLastResort(t *testing.T) {
+	t.Parallel()
+
+	model := "test-model"
+	registerSchedulerModels(t, "gemini", model, "gemini-normal", "gemini-backup")
+	registerSchedulerModels(t, "claude", model, "claude-normal")
+
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{ID: "gemini-normal", Provider: "gemini", Attributes: map[string]string{"priority": "0"}},
+		&Auth{ID: "gemini-backup", Provider: "gemini", Attributes: map[string]string{"priority": "-1"}},
+		&Auth{ID: "claude-normal", Provider: "claude", Attributes: map[string]string{"priority": "0"}},
+	)
+	providers := []string{"gemini", "claude"}
+
+	// Khi chưa tried gì, backup không được pick
+	for index := 0; index < 4; index++ {
+		got, provider, errPick := scheduler.pickMixed(context.Background(), providers, model, cliproxyexecutor.Options{}, nil)
+		if errPick != nil {
+			t.Fatalf("pickMixed() #%d error = %v", index, errPick)
+		}
+		if got == nil {
+			t.Fatalf("pickMixed() #%d auth = nil", index)
+		}
+		if got.ID == "gemini-backup" {
+			t.Fatalf("pickMixed() #%d picked backup %q (provider=%s) before non-backup auths were exhausted", index, got.ID, provider)
+		}
+	}
+
+	// Sau khi tried tất cả non-backup, backup mới được chọn
+	tried := map[string]struct{}{"gemini-normal": {}, "claude-normal": {}}
+	got, _, errPick := scheduler.pickMixed(context.Background(), providers, model, cliproxyexecutor.Options{}, tried)
+	if errPick != nil {
+		t.Fatalf("pickMixed() with all non-backup tried: error = %v", errPick)
+	}
+	if got == nil || got.ID != "gemini-backup" {
+		t.Fatalf("pickMixed() with all non-backup tried: auth.ID = %q, want gemini-backup", got.ID)
+	}
+}
+
+// TestBackupAuthBypassesMaxRetryCredentialsLimit verifies that backup (priority=-1)
+// credentials are always attempted even when the maxRetryCredentials limit has been
+// reached by non-backup credentials. All backup credentials are tried in order
+// before returning an error.
+func TestBackupAuthBypassesMaxRetryCredentialsLimit(t *testing.T) {
+	model := "test-model"
+	reg := registry.GetGlobalRegistry()
+	for _, id := range []string{"normal-a", "normal-b", "backup-1", "backup-2"} {
+		reg.RegisterClient(id, "gemini", []*registry.ModelInfo{{ID: model}})
+	}
+	t.Cleanup(func() {
+		for _, id := range []string{"normal-a", "normal-b", "backup-1", "backup-2"} {
+			reg.UnregisterClient(id)
+		}
+	})
+
+	callOrder := make([]string, 0, 4)
+	exec := &captureOrderExecutor{
+		provider:  "gemini",
+		callOrder: &callOrder,
+		// Tất cả đều fail để kiểm tra retry đi hết vòng
+		failAll: true,
+	}
+
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	manager.RegisterExecutor(exec)
+	// maxRetryCredentials = 2 — chỉ cho phép 2 non-backup
+	manager.SetRetryConfig(0, 0, 2)
+
+	for _, auth := range []*Auth{
+		{ID: "normal-a", Provider: "gemini", Attributes: map[string]string{"priority": "0"}},
+		{ID: "normal-b", Provider: "gemini", Attributes: map[string]string{"priority": "0"}},
+		{ID: "backup-1", Provider: "gemini", Attributes: map[string]string{"priority": "-1"}},
+		{ID: "backup-2", Provider: "gemini", Attributes: map[string]string{"priority": "-1"}},
+	} {
+		if _, errReg := manager.Register(context.Background(), auth); errReg != nil {
+			t.Fatalf("Register(%s) error = %v", auth.ID, errReg)
+		}
+	}
+
+	_, errExec := manager.Execute(context.Background(), []string{"gemini"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{})
+	if errExec == nil {
+		t.Fatal("Execute() error = nil, want error (all auths fail)")
+	}
+
+	// Hệ thống phải đã thử: normal-a, normal-b (hết limit), nhưng vẫn tiếp tục backup-1, backup-2
+	tried := make(map[string]int, len(callOrder))
+	for _, id := range callOrder {
+		tried[id]++
+	}
+	for _, wantID := range []string{"normal-a", "normal-b", "backup-1", "backup-2"} {
+		if tried[wantID] == 0 {
+			t.Errorf("auth %q was never tried; callOrder=%v", wantID, callOrder)
+		}
+	}
+}
+
+// captureOrderExecutor records which auth IDs were executed, in order.
+type captureOrderExecutor struct {
+	provider  string
+	callOrder *[]string
+	failAll   bool
+}
+
+func (e *captureOrderExecutor) Identifier() string { return e.provider }
+
+func (e *captureOrderExecutor) Execute(_ context.Context, auth *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	*e.callOrder = append(*e.callOrder, auth.ID)
+	if e.failAll {
+		return cliproxyexecutor.Response{}, &Error{Code: "upstream_error", HTTPStatus: 500, Message: "forced failure"}
+	}
+	return cliproxyexecutor.Response{Payload: []byte(`{}`)}, nil
+}
+
+func (e *captureOrderExecutor) ExecuteStream(_ context.Context, _ *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	return nil, nil
+}
+
+func (e *captureOrderExecutor) Refresh(_ context.Context, auth *Auth) (*Auth, error) {
+	return auth, nil
+}
+
+func (e *captureOrderExecutor) CountTokens(_ context.Context, _ *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, nil
+}
+
+func (e *captureOrderExecutor) HttpRequest(_ context.Context, _ *Auth, _ *http.Request) (*http.Response, error) {
+	return nil, nil
 }
 
 func TestManagerPluginSchedulerTerminalRejection(t *testing.T) {

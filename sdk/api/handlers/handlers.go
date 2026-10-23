@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
@@ -54,6 +55,19 @@ type ErrorDetail struct {
 }
 
 const idempotencyKeyMetadataKey = "idempotency_key"
+
+const errorBrandingSuffix = " (llmgate.app)"
+
+// withErrorBranding appends the service website to locally built error messages.
+// Upstream JSON payloads returned as-is never pass through here, so clients
+// matching on upstream text are unaffected. Prefix matching still works
+// because the suffix is always at the end.
+func withErrorBranding(msg string) string {
+	if msg == "" || strings.Contains(msg, "llmgate.app") {
+		return msg
+	}
+	return msg + errorBrandingSuffix
+}
 
 const (
 	defaultStreamingKeepAliveSeconds = 0
@@ -97,6 +111,7 @@ func BuildErrorResponseBodyWithError(status int, errText string, err error) []by
 				}
 			}
 		}
+		message = withErrorBranding(message)
 		r := false
 		payload, errMarshal := json.Marshal(ErrorResponse{
 			Error: ErrorDetail{
@@ -147,13 +162,13 @@ func BuildErrorResponseBodyWithError(status int, errText string, err error) []by
 
 	payload, errMarshal := json.Marshal(ErrorResponse{
 		Error: ErrorDetail{
-			Message: errText,
+			Message: withErrorBranding(errText),
 			Type:    errType,
 			Code:    code,
 		},
 	})
 	if errMarshal != nil {
-		return []byte(fmt.Sprintf(`{"error":{"message":%q,"type":"server_error","code":"internal_server_error"}}`, errText))
+		return []byte(fmt.Sprintf(`{"error":{"message":%q,"type":"server_error","code":"internal_server_error"}}`, withErrorBranding(errText)))
 	}
 	return payload
 }
@@ -422,6 +437,9 @@ type BaseAPIHandler struct {
 	// ModelRouterHost optionally routes matching requests to a plugin executor, the router's own
 	// executor, or a built-in provider before model-to-provider resolution and auth selection.
 	ModelRouterHost PluginModelRouterHost
+
+	// quotaExceeded controls registry-driven model version downgrade.
+	quotaExceeded QuotaExceededBehavior
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.
@@ -437,6 +455,9 @@ func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager) *B
 	return &BaseAPIHandler{
 		Cfg:         cfg,
 		AuthManager: authManager,
+		quotaExceeded: QuotaExceededBehavior{
+			SwitchPreviewModel: true,
+		},
 	}
 }
 
@@ -464,6 +485,14 @@ func (h *BaseAPIHandler) CurrentConfig() *config.SDKConfig {
 	cfg := h.Cfg
 	h.runtimeMu.RUnlock()
 	return cfg
+}
+
+// SetQuotaExceededBehavior copies quota-exceeded failover settings into the handler.
+func (h *BaseAPIHandler) SetQuotaExceededBehavior(q internalconfig.QuotaExceeded) {
+	if h == nil {
+		return
+	}
+	h.quotaExceeded = QuotaExceededBehavior{SwitchPreviewModel: q.SwitchPreviewModel}
 }
 
 // SetPluginHost configures the optional plugin interceptor host.

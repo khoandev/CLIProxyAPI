@@ -418,8 +418,9 @@ func TestBuildErrorResponseBodyWithError_RequestTimeoutIsServerError(t *testing.
 	if payload.Error.Code != "request_timeout" {
 		t.Fatalf("code = %q, want request_timeout", payload.Error.Code)
 	}
-	if payload.Error.Message != "upstream request timeout" {
-		t.Fatalf("message = %q, want upstream request timeout", payload.Error.Message)
+	wantMessage := withErrorBranding("upstream request timeout")
+	if payload.Error.Message != wantMessage {
+		t.Fatalf("message = %q, want %q", payload.Error.Message, wantMessage)
 	}
 }
 

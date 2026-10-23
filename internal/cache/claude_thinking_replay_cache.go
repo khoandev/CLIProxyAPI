@@ -36,7 +36,7 @@ const (
 	ClaudeThinkingReplayCacheMaxBlocksPerTurn = 512
 
 	// ClaudeThinkingReplayCacheMaxTotalBytes bounds aggregate in-process Claude replay content.
-	ClaudeThinkingReplayCacheMaxTotalBytes = 256 << 20
+	ClaudeThinkingReplayCacheMaxTotalBytes = 64 << 20
 
 	claudeThinkingReplayCacheMaxSerializedBytes = ClaudeThinkingReplayCacheMaxBytesPerSession + 1024
 )

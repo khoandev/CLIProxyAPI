@@ -114,7 +114,11 @@ func authHasOAuthMetadata(auth *Auth) bool {
 	if auth == nil || len(auth.Metadata) == 0 {
 		return false
 	}
-	for _, key := range []string{"access_token", "refresh_token", "id_token", "email", "token_type", "expires_at", "expired"} {
+	// "email" is intentionally excluded: it can appear in API-key auth records
+	// (e.g. user info stored alongside the key) and would cause a false-positive
+	// OAuth classification, breaking SelectAuthByKind and eligibility filtering.
+	// Only unambiguous OAuth token fields are used as signals here.
+	for _, key := range []string{"access_token", "refresh_token", "id_token", "token_type", "expires_at", "expired"} {
 		if authMetadataString(auth, key) != "" {
 			return true
 		}

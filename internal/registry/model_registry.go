@@ -108,6 +108,14 @@ type ModelInfo struct {
 	// IsCompat enables compatibility handling for this configured API-key model.
 	// It is internal metadata and is not exposed in model listings.
 	IsCompat bool `json:"-"`
+
+	// ImageDisabled marks this openai-compatibility model as not callable through
+	// /v1/images/* endpoints. Set when the user explicitly configures image: false.
+	ImageDisabled bool `json:"-"`
+
+	// VideoDisabled marks this openai-compatibility model as not callable through
+	// /v1/videos/* endpoints. Set when the user explicitly configures video: false.
+	VideoDisabled bool `json:"-"`
 }
 
 // ModelConfig holds optional runtime overrides for a model definition.
@@ -1640,6 +1648,22 @@ func (r *ModelRegistry) GetModelCount(modelID string) int {
 	return 0
 }
 
+// RegisteredModelIDs returns distinct model IDs with Count > 0.
+func (r *ModelRegistry) RegisteredModelIDs() []string {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	ids := make([]string, 0, len(r.models))
+	for modelID, registration := range r.models {
+		if registration == nil || registration.Count <= 0 {
+			continue
+		}
+		ids = append(ids, modelID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // GetModelProviders returns provider identifiers that currently supply the given model
 // Parameters:
 //   - modelID: The model ID to check
@@ -1962,4 +1986,25 @@ func (r *ModelRegistry) ClientRegistrationEpoch(clientID string) uint64 {
 func (r *ModelRegistry) GetModelsForClient(clientID string) []*ModelInfo {
 	models, _ := r.GetModelsAndEpochForClient(clientID)
 	return models
+}
+
+// GetAllProviders returns the distinct provider identifiers of all registered clients.
+// Used as a fallback for video endpoints that do not carry a model name.
+func (r *ModelRegistry) GetAllProviders() []string {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	seen := make(map[string]struct{}, len(r.clientProviders))
+	out := make([]string, 0, len(r.clientProviders))
+	for _, provider := range r.clientProviders {
+		if provider == "" {
+			continue
+		}
+		if _, exists := seen[provider]; exists {
+			continue
+		}
+		seen[provider] = struct{}{}
+		out = append(out, provider)
+	}
+	sort.Strings(out)
+	return out
 }

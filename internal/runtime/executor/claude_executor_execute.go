@@ -207,6 +207,8 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 
 	// Extract betas from body and convert to header
 	var extraBetas []string
+	extraBetas, body = extractAndRemoveBetas(body)
+	body, extraBetas = stripClaudeFastModeIfDisabled(e.cfg, body, extraBetas)
 	bodyForTranslation := body
 	bodyForUpstream := body
 	var oauthToolNamesReverseMap map[string]string
@@ -254,6 +256,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		diagnosticsState = claudeDiagnosticsRequestState{}
 	}
 	extraBetas, bodyForUpstream = extractAndRemoveBetas(bodyForUpstream)
+	bodyForUpstream, extraBetas = stripClaudeFastModeIfDisabled(e.cfg, bodyForUpstream, extraBetas)
 	bodyForUpstream = stripPromptCacheOptions(bodyForUpstream)
 	if cchSigning {
 		bodyForUpstream, err = signAnthropicMessagesBody(bodyForUpstream)
@@ -358,6 +361,10 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		return resp, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, err)
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, data)
+	if bodyErr := helps.DetectUpstreamErrorBody(httpResp.StatusCode, data); bodyErr != nil {
+		helps.RecordAPIResponseError(ctx, e.cfg, bodyErr)
+		return resp, wrapClaudeFastRequestError(fastRequest, httpResp.StatusCode, bodyErr)
+	}
 	var streamUsage helps.StreamUsageBuffer
 	if upstreamStream {
 		if errValidate := validateClaudeStreamingResponse(data); errValidate != nil {

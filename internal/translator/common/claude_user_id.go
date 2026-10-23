@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 )
 
@@ -16,16 +17,19 @@ import (
 // the same user_id on every worker and every turn, while different
 // conversations get different values.
 func DeriveClaudeUserID(rawJSON []byte) string {
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 
+	// The result aliases the payload, so copy it before handing it out: the
+	// caller may keep it while the payload buffer is reused. The original
+	// whitespace is preserved, only its presence is checked.
 	if v := root.Get("metadata.user_id"); v.Exists() && v.Type == gjson.String {
 		if raw := v.String(); strings.TrimSpace(raw) != "" {
-			return raw
+			return strings.Clone(raw)
 		}
 	}
 	if v := root.Get("user"); v.Exists() && v.Type == gjson.String {
 		if raw := v.String(); strings.TrimSpace(raw) != "" {
-			return raw
+			return strings.Clone(raw)
 		}
 	}
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cachecost"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	coresession "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -104,6 +105,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 	}
 
 	usageDetail := coreusage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
+	usageDetail = coreusage.RedistributeCacheRead(usageDetail, cachecost.Ratio())
 	tokens := tokenStats{
 		InputTokens:            usageDetail.InputTokens,
 		OutputTokens:           usageDetail.OutputTokens,

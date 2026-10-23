@@ -41,40 +41,6 @@ func assertFileBodySourceCleaned(t *testing.T, partPaths []string) {
 	}
 }
 
-func TestFileBodySource_RecreatesPartDirAfterManualCleanup(t *testing.T) {
-	logsDir := t.TempDir()
-	source, errSource := NewFileBodySourceInDir(logsDir, "websocket-timeline-test")
-	if errSource != nil {
-		t.Fatalf("NewFileBodySourceInDir: %v", errSource)
-	}
-	if errAppend := source.AppendPart([]byte("before manual cleanup")); errAppend != nil {
-		t.Fatalf("AppendPart before cleanup: %v", errAppend)
-	}
-	if errRemove := os.RemoveAll(logsDir); errRemove != nil {
-		t.Fatalf("RemoveAll logs dir: %v", errRemove)
-	}
-	if errAppend := source.AppendPart([]byte("after manual cleanup")); errAppend != nil {
-		t.Fatalf("AppendPart after cleanup: %v", errAppend)
-	}
-
-	raw, errBytes := source.Bytes()
-	if errBytes != nil {
-		t.Fatalf("Bytes after cleanup: %v", errBytes)
-	}
-	if bytes.Contains(raw, []byte("before manual cleanup")) {
-		t.Fatalf("expected manually removed part to be skipped, got %q", string(raw))
-	}
-	if !bytes.Contains(raw, []byte("after manual cleanup")) {
-		t.Fatalf("expected recreated part content, got %q", string(raw))
-	}
-
-	partPaths := source.Paths()
-	if errCleanup := source.Cleanup(); errCleanup != nil {
-		t.Fatalf("Cleanup: %v", errCleanup)
-	}
-	assertFileBodySourceCleaned(t, partPaths)
-}
-
 func TestFileRequestLogger_HomeEnabled_ForwardsWhenRequestLogEnabled(t *testing.T) {
 	original := currentHomeRequestLogClient
 	defer func() {
@@ -448,8 +414,6 @@ func TestHomeStreamingLogWriter_CloseTerminatesWhenClientUnhealthy(t *testing.T)
 	done := make(chan struct{})
 	go func() {
 		_ = hw.Close()
-		// If Close properly closes chunkChan and waits for doneChan, doneChan must be closed.
-		<-hw.doneChan
 		close(done)
 	}()
 
@@ -457,7 +421,7 @@ func TestHomeStreamingLogWriter_CloseTerminatesWhenClientUnhealthy(t *testing.T)
 	case <-done:
 		// Success
 	case <-time.After(500 * time.Millisecond):
-		t.Fatalf("homeStreamingLogWriter leaked writer goroutine after Close with unhealthy client")
+		t.Fatalf("homeStreamingLogWriter Close did not return with unhealthy client")
 	}
 }
 

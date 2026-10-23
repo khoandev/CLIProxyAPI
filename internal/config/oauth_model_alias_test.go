@@ -2,11 +2,13 @@ package config
 
 import "testing"
 
+func boolPtrConfig(b bool) *bool { return &b }
+
 func TestSanitizeOAuthModelAlias_PreservesOptionalFields(t *testing.T) {
 	cfg := &Config{
 		OAuthModelAlias: map[string][]OAuthModelAlias{
 			" CoDeX ": {
-				{Name: " gpt-5 ", Alias: " g5 ", Fork: true, DisplayName: " GPT Five ", ForceMapping: true},
+				{Name: " gpt-5 ", Alias: " g5 ", Fork: true, DisplayName: " GPT Five ", ForceMapping: boolPtrConfig(true)},
 				{Name: "gpt-6", Alias: "g6"},
 			},
 		},
@@ -18,10 +20,11 @@ func TestSanitizeOAuthModelAlias_PreservesOptionalFields(t *testing.T) {
 	if len(aliases) != 2 {
 		t.Fatalf("expected 2 sanitized aliases, got %d", len(aliases))
 	}
-	if aliases[0].Name != "gpt-5" || aliases[0].Alias != "g5" || !aliases[0].Fork || aliases[0].DisplayName != "GPT Five" || !aliases[0].ForceMapping {
+	if aliases[0].Name != "gpt-5" || aliases[0].Alias != "g5" || !aliases[0].Fork || aliases[0].DisplayName != "GPT Five" || !aliases[0].GetForceMapping() {
 		t.Fatalf("unexpected sanitized first alias: %+v", aliases[0])
 	}
-	if aliases[1].Name != "gpt-6" || aliases[1].Alias != "g6" || aliases[1].Fork || aliases[1].DisplayName != "" || aliases[1].ForceMapping {
+	// aliases[1] has no explicit force-mapping set, so GetForceMapping() defaults to true.
+	if aliases[1].Name != "gpt-6" || aliases[1].Alias != "g6" || aliases[1].Fork || aliases[1].DisplayName != "" || !aliases[1].GetForceMapping() {
 		t.Fatalf("unexpected sanitized second alias: %+v", aliases[1])
 	}
 }
@@ -83,7 +86,7 @@ oauth-request-scoped-errors:
 	if !ok || len(aliases) != 1 {
 		t.Fatalf("oauth-model-alias[meta] missing or len != 1: %#v", aliases)
 	}
-	if aliases[0].Name != "muse-spark-1.3" || aliases[0].Alias != "muse-latest" || !aliases[0].Fork || !aliases[0].ForceMapping {
+	if aliases[0].Name != "muse-spark-1.3" || aliases[0].Alias != "muse-latest" || !aliases[0].Fork || !aliases[0].GetForceMapping() {
 		t.Fatalf("unexpected meta alias: %+v", aliases[0])
 	}
 

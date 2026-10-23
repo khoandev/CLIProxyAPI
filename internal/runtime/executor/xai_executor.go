@@ -43,6 +43,7 @@ const (
 	xaiVideosGenerationsPath    = "/videos/generations"
 	xaiVideosEditsPath          = "/videos/edits"
 	xaiVideosExtensionsPath     = "/videos/extensions"
+	xaiVideosCharactersPath     = "/videos/characters"
 	xaiVideosPath               = "/videos"
 	xaiTTSPath                  = "/tts"
 	xaiIdempotencyKeyMetaKey    = "idempotency_key"

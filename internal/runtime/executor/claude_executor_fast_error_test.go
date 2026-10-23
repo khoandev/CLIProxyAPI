@@ -103,7 +103,7 @@ func TestClaudeExecutorFastHTTPErrorPassesThroughWithoutRetry(t *testing.T) {
 			}
 			request := cliproxyexecutor.Request{Model: "claude-opus-5", Payload: requestPayload}
 
-			executor := NewClaudeExecutor(&config.Config{})
+			executor := NewClaudeExecutor(&config.Config{FastServiceTier: true})
 			var errExecute error
 			if testCase.stream {
 				_, errExecute = executor.ExecuteStream(ctx, auth, request, options)
@@ -180,7 +180,7 @@ func TestClaudeExecutorFastSuccessfulHTTPDecodeErrorDoesNotExposeSuccessStatus(t
 				Model:   "claude-opus-5",
 				Payload: []byte(`{"model":"claude-opus-5","max_tokens":16,"speed":"fast","messages":[{"role":"user","content":"reply OK"}]}`),
 			}
-			errRun := testCase.run(ctx, NewClaudeExecutor(&config.Config{}), auth, request, cliproxyexecutor.Options{
+			errRun := testCase.run(ctx, NewClaudeExecutor(&config.Config{FastServiceTier: true}), auth, request, cliproxyexecutor.Options{
 				Stream:         testCase.name == "stream",
 				SourceFormat:   sdktranslator.FormatClaude,
 				ResponseFormat: sdktranslator.FormatClaude,
@@ -224,7 +224,7 @@ func TestClaudeExecutorFastTransportErrorIsRequestScopedWithoutRetry(t *testing.
 		Payload: []byte(`{"model":"claude-opus-5","max_tokens":16,"speed":"fast","messages":[{"role":"user","content":"reply OK"}]}`),
 	}
 
-	_, errExecute := NewClaudeExecutor(&config.Config{}).Execute(ctx, auth, request, cliproxyexecutor.Options{
+	_, errExecute := NewClaudeExecutor(&config.Config{FastServiceTier: true}).Execute(ctx, auth, request, cliproxyexecutor.Options{
 		SourceFormat:   sdktranslator.FormatClaude,
 		ResponseFormat: sdktranslator.FormatClaude,
 	})

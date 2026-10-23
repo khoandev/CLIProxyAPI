@@ -70,9 +70,10 @@ type RequestLogger interface {
 }
 
 // StreamingLogWriter handles real-time logging of streaming response chunks.
-// It provides methods for writing streaming response data asynchronously.
+// It provides methods for spooling streaming response data until the log is assembled.
 type StreamingLogWriter interface {
-	// WriteChunkAsync writes a response chunk asynchronously (non-blocking).
+	// WriteChunkAsync spools a response chunk for later assembly. The writer
+	// copies chunk before returning, so the caller keeps ownership of its buffer.
 	//
 	// Parameters:
 	//   - chunk: The response chunk to write

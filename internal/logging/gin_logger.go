@@ -5,9 +5,9 @@ package logging
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +22,7 @@ var aiAPIPrefixes = []string{
 	"/v1beta",
 	"/openai/v1",
 	"/backend-api/codex",
+	"/files",
 }
 
 const (
@@ -94,7 +95,7 @@ func GinLogrusLogger() gin.HandlerFunc {
 		if requestID == "" {
 			requestID = "--------"
 		}
-		logLine := fmt.Sprintf("%3d | %13v | %15s | %-7s %q", statusCode, latency, clientIP, method, path)
+		logLine := buildRequestLogLine(statusCode, latency.String(), clientIP, method, path)
 		if creditsUsed(c) {
 			logLine += " [credits]"
 		}
@@ -112,6 +113,43 @@ func GinLogrusLogger() gin.HandlerFunc {
 		default:
 			entry.Info(logLine)
 		}
+	}
+}
+
+// buildRequestLogLine renders the per-request access log line. It mirrors
+// fmt.Sprintf("%3d | %13v | %15s | %-7s %q", ...) without reflection.
+func buildRequestLogLine(statusCode int, latency, clientIP, method, path string) string {
+	var sb strings.Builder
+	sb.Grow(len(path) + len(method) + len(clientIP) + len(latency) + 32)
+	var statusBuf [12]byte
+	statusDigits := strconv.AppendInt(statusBuf[:0], int64(statusCode), 10)
+	for i := len(statusDigits); i < 3; i++ {
+		sb.WriteByte(' ')
+	}
+	sb.Write(statusDigits)
+	sb.WriteString(" | ")
+	writePaddedLeft(&sb, latency, 13)
+	sb.WriteString(" | ")
+	writePaddedLeft(&sb, clientIP, 15)
+	sb.WriteString(" | ")
+	writePaddedRight(&sb, method, 7)
+	sb.WriteString(" ")
+	// Quote the path so control characters cannot forge extra log lines.
+	sb.WriteString(strconv.Quote(path))
+	return sb.String()
+}
+
+func writePaddedLeft(sb *strings.Builder, s string, width int) {
+	for i := len(s); i < width; i++ {
+		sb.WriteByte(' ')
+	}
+	sb.WriteString(s)
+}
+
+func writePaddedRight(sb *strings.Builder, s string, width int) {
+	sb.WriteString(s)
+	for i := len(s); i < width; i++ {
+		sb.WriteByte(' ')
 	}
 }
 
