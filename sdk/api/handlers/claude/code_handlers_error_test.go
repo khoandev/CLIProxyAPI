@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/errorfilter"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
@@ -906,4 +907,24 @@ func TestClaudeStreamMultiLineDataEventsAreRecognizedAcrossChunks(t *testing.T) 
 			t.Fatalf("expected terminal error event when stream truncated after multiline tool_use containing nested message_stop line; body=%q", body)
 		}
 	})
+}
+
+func TestClaudeErrorEnvelopeReplacesCJKMessage(t *testing.T) {
+	handler := &ClaudeCodeAPIHandler{}
+	msg := &interfaces.ErrorMessage{
+		StatusCode: http.StatusTooManyRequests,
+		Error:      errors.New(`{"error":{"message":"配额不足，请稍后重试","type":"rate_limit_error"}}`),
+	}
+
+	response := handler.toClaudeError(msg)
+
+	if response.Error.Message != errorfilter.GenericErrorMessage {
+		t.Fatalf("error.message = %q, want %q", response.Error.Message, errorfilter.GenericErrorMessage)
+	}
+	if response.Error.Type != "rate_limit_error" {
+		t.Fatalf("error.type = %q, want rate_limit_error", response.Error.Type)
+	}
+	if errorfilter.ContainsCJK(response.Error.Message) {
+		t.Fatalf("error.message still contains CJK: %q", response.Error.Message)
+	}
 }

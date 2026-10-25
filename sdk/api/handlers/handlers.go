@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/errorfilter"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
@@ -111,6 +112,7 @@ func BuildErrorResponseBodyWithError(status int, errText string, err error) []by
 				}
 			}
 		}
+		message = errorfilter.SanitizeMessage(message)
 		message = withErrorBranding(message)
 		r := false
 		payload, errMarshal := json.Marshal(ErrorResponse{
@@ -130,9 +132,12 @@ func BuildErrorResponseBodyWithError(status int, errText string, err error) []by
 	if trimmed != "" && json.Valid([]byte(trimmed)) {
 		var compact bytes.Buffer
 		if errCompact := json.Compact(&compact, []byte(trimmed)); errCompact == nil {
+			if sanitized, changed := errorfilter.SanitizeJSONErrorBody(compact.Bytes()); changed {
+				return sanitized
+			}
 			return compact.Bytes()
 		}
-		return []byte(trimmed)
+		return errorfilter.SanitizeErrorBody([]byte(trimmed))
 	}
 
 	errType := "invalid_request_error"
@@ -160,6 +165,7 @@ func BuildErrorResponseBodyWithError(status int, errText string, err error) []by
 		}
 	}
 
+	errText = errorfilter.SanitizeMessage(errText)
 	payload, errMarshal := json.Marshal(ErrorResponse{
 		Error: ErrorDetail{
 			Message: withErrorBranding(errText),

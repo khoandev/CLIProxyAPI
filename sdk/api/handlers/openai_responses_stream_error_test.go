@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/errorfilter"
 )
 
 func TestBuildOpenAIResponsesStreamErrorChunk(t *testing.T) {
@@ -340,5 +342,28 @@ func TestBuildOpenAIResponsesStreamChunksMapAnthropicPromptTooLongToContextLengt
 	}
 	if _, hasCode := otherPayload.Response.Error["code"]; hasCode {
 		t.Fatalf("unrelated invalid_request_error unexpectedly gained code: %v", otherPayload.Response.Error)
+	}
+}
+
+func TestBuildOpenAIResponsesStreamErrorChunkReplacesCJKMessage(t *testing.T) {
+	chunk := BuildOpenAIResponsesStreamErrorChunk(
+		http.StatusTooManyRequests,
+		`{"error":{"message":"配额不足，请稍后重试","type":"rate_limit_error","code":"insufficient_quota"}}`,
+		0,
+	)
+	if errorfilter.ContainsCJK(string(chunk)) {
+		t.Fatalf("chunk still contains CJK: %s", chunk)
+	}
+	var payload struct {
+		Error map[string]any `json:"error"`
+	}
+	if errUnmarshal := json.Unmarshal(chunk, &payload); errUnmarshal != nil {
+		t.Fatalf("unmarshal chunk: %v", errUnmarshal)
+	}
+	if payload.Error["message"] != errorfilter.GenericErrorMessage {
+		t.Fatalf("message = %v, want %q", payload.Error["message"], errorfilter.GenericErrorMessage)
+	}
+	if payload.Error["code"] != "insufficient_quota" {
+		t.Fatalf("code = %v, want insufficient_quota", payload.Error["code"])
 	}
 }

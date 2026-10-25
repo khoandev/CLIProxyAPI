@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/errorfilter"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
@@ -946,4 +947,49 @@ func TestWriteErrorResponse_ContextCanceledUses499(t *testing.T) {
 	if recorder.Code != clienterror.StatusClientClosedRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, clienterror.StatusClientClosedRequest)
 	}
+}
+
+func TestBuildErrorResponseBodyWithError_ReplacesCJKMessage(t *testing.T) {
+	type errorPayload struct {
+		Error struct {
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	t.Run("upstream json envelope", func(t *testing.T) {
+		upstream := `{"error":{"message":"配额不足，请稍后重试","type":"insufficient_quota","code":"insufficient_quota"}}`
+		body := BuildErrorResponseBodyWithError(http.StatusTooManyRequests, upstream, errors.New("upstream returned an error"))
+		var payload errorPayload
+		if errUnmarshal := json.Unmarshal(body, &payload); errUnmarshal != nil {
+			t.Fatalf("unmarshal error body: %v", errUnmarshal)
+		}
+		if payload.Error.Message != errorfilter.GenericErrorMessage {
+			t.Fatalf("message = %q, want %q", payload.Error.Message, errorfilter.GenericErrorMessage)
+		}
+		if payload.Error.Type != "insufficient_quota" {
+			t.Fatalf("type = %q, want insufficient_quota", payload.Error.Type)
+		}
+		if payload.Error.Code != "insufficient_quota" {
+			t.Fatalf("code = %q, want insufficient_quota", payload.Error.Code)
+		}
+		if errorfilter.ContainsCJK(string(body)) {
+			t.Fatalf("body still contains CJK: %s", body)
+		}
+	})
+
+	t.Run("plain text message", func(t *testing.T) {
+		body := BuildErrorResponseBodyWithError(http.StatusBadGateway, "上游服务不可用", errors.New("upstream returned an error"))
+		var payload errorPayload
+		if errUnmarshal := json.Unmarshal(body, &payload); errUnmarshal != nil {
+			t.Fatalf("unmarshal error body: %v", errUnmarshal)
+		}
+		if payload.Error.Message != errorfilter.GenericErrorMessage {
+			t.Fatalf("message = %q, want %q", payload.Error.Message, errorfilter.GenericErrorMessage)
+		}
+		if errorfilter.ContainsCJK(string(body)) {
+			t.Fatalf("body still contains CJK: %s", body)
+		}
+	})
 }

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/errorfilter"
 )
 
 type openAIResponsesStreamErrorChunk struct {
@@ -170,11 +172,11 @@ func openAIResponsesStreamErrorDetail(status int, errText, code, message string)
 	if trimmed != "" && json.Valid([]byte(trimmed)) {
 		if errUnmarshal := unmarshalJSONWithNumber([]byte(trimmed), &payload); errUnmarshal == nil {
 			if errorDetail, ok := payload["error"].(map[string]any); ok {
-				return applyOpenAIResponsesNestedErrorCode(errorDetail)
+				return sanitizeResponsesErrorDetail(applyOpenAIResponsesNestedErrorCode(errorDetail))
 			}
 			if response, ok := payload["response"].(map[string]any); ok {
 				if errorDetail, ok := response["error"].(map[string]any); ok {
-					return applyOpenAIResponsesNestedErrorCode(errorDetail)
+					return sanitizeResponsesErrorDetail(applyOpenAIResponsesNestedErrorCode(errorDetail))
 				}
 			}
 			if m, ok := payload["message"].(string); ok && strings.TrimSpace(m) != "" {
@@ -203,6 +205,30 @@ func openAIResponsesStreamErrorDetail(status int, errText, code, message string)
 		}
 		if paramVal, exists := payload["param"]; exists {
 			detail["param"] = paramVal
+		}
+	}
+	return sanitizeResponsesErrorDetail(detail)
+}
+
+// sanitizeResponsesErrorDetail drops CJK text from a Responses error detail so
+// upstream gateways answering in Chinese never leak their message downstream.
+// The classification survives when it is ASCII, matching the other error paths.
+func sanitizeResponsesErrorDetail(detail map[string]any) map[string]any {
+	if detail == nil {
+		return nil
+	}
+	if message, ok := detail["message"].(string); ok && errorfilter.ContainsCJK(message) {
+		detail["message"] = errorfilter.GenericErrorMessage
+	}
+	for _, field := range [...]struct {
+		name     string
+		fallback string
+	}{
+		{name: "code", fallback: "upstream_error"},
+		{name: "type", fallback: "server_error"},
+	} {
+		if value, ok := detail[field.name].(string); ok && errorfilter.ContainsCJK(value) {
+			detail[field.name] = field.fallback
 		}
 	}
 	return detail

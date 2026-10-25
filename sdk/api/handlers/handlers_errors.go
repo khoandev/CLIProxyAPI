@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/errorfilter"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"golang.org/x/net/context"
@@ -186,7 +187,7 @@ func writeDirectErrorResponse(c *gin.Context, status int, msg *interfaces.ErrorM
 			c.Writer.Header().Add(key, value)
 		}
 	}
-	body := bytes.Clone(msg.Body)
+	body := errorfilter.SanitizeErrorBody(bytes.Clone(msg.Body))
 	appendAPIResponse(c, body)
 	if !c.Writer.Written() && c.Writer.Header().Get("Content-Type") == "" {
 		c.Writer.Header().Set("Content-Type", "application/json")
