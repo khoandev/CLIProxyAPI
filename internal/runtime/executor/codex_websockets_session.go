@@ -33,6 +33,17 @@ const (
 type codexWebsocketSessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]*codexWebsocketSession
+	// onEvict, when set, runs for every session id dropped from the store so a
+	// companion store keyed by the same ids can drop its state too.
+	onEvict func(sessionID string)
+}
+
+// notifyEvicted runs the eviction hook outside the store mutex.
+func (s *codexWebsocketSessionStore) notifyEvicted(sessionID string) {
+	if s == nil || s.onEvict == nil {
+		return
+	}
+	s.onEvict(sessionID)
 }
 
 var globalCodexWebsocketSessionStore = &codexWebsocketSessionStore{
@@ -43,6 +54,50 @@ type websocketConnectionCloser struct {
 	conn *websocket.Conn
 	once sync.Once
 	err  error
+}
+
+// codexTerminalResponseIDLimit bounds how many completed response ids a session
+// remembers. The set only answers "did this response already finish", which
+// matters for the most recent turns, so a fixed ring keeps it bounded without
+// allocating per response.
+const codexTerminalResponseIDLimit = 64
+
+// terminalResponseIDRing remembers the most recent terminal response ids.
+type terminalResponseIDRing struct {
+	ids   [codexTerminalResponseIDLimit]string
+	next  int
+	count int
+}
+
+// add remembers id, replacing the oldest entry once the ring is full.
+func (r *terminalResponseIDRing) add(id string) {
+	for i := 0; i < r.count; i++ {
+		if r.ids[i] == id {
+			return
+		}
+	}
+	r.ids[r.next] = id
+	r.next = (r.next + 1) % codexTerminalResponseIDLimit
+	if r.count < codexTerminalResponseIDLimit {
+		r.count++
+	}
+}
+
+// has reports whether id is still remembered.
+func (r *terminalResponseIDRing) has(id string) bool {
+	for i := 0; i < r.count; i++ {
+		if r.ids[i] == id {
+			return true
+		}
+	}
+	return false
+}
+
+// reset forgets every remembered id.
+func (r *terminalResponseIDRing) reset() {
+	r.ids = [codexTerminalResponseIDLimit]string{}
+	r.next = 0
+	r.count = 0
 }
 
 func newWebsocketConnectionCloser(conn *websocket.Conn) *websocketConnectionCloser {
@@ -96,7 +151,7 @@ type codexWebsocketSession struct {
 	terminalErr  error
 
 	responseStateConn   *websocket.Conn
-	terminalResponseIDs map[string]struct{}
+	terminalResponseIDs terminalResponseIDRing
 
 	readerConn *websocket.Conn
 
@@ -167,7 +222,7 @@ func (s *codexWebsocketSession) resetTerminalError(conn *websocket.Conn) {
 	s.terminalErr = nil
 	if s.responseStateConn != conn {
 		s.responseStateConn = conn
-		s.terminalResponseIDs = make(map[string]struct{})
+		s.terminalResponseIDs.reset()
 	}
 	s.activeMu.Unlock()
 }
@@ -717,12 +772,14 @@ func (s *codexWebsocketSessionStore) removeSession(sessionID string, sess *codex
 		return false
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	current, ok := s.sessions[sessionID]
 	if !ok || current != sess {
+		s.mu.Unlock()
 		return false
 	}
 	delete(s.sessions, sessionID)
+	s.mu.Unlock()
+	s.notifyEvicted(sessionID)
 	return true
 }
 
@@ -740,19 +797,25 @@ func (s *codexWebsocketSessionStore) evictExcessSessions() {
 	// The idle sweep runs on every request, so it must not allocate in the
 	// common case where no session is idle.
 	var expired []*codexWebsocketSession
+	var expiredIDs []string
 	s.mu.Lock()
 	for id, sess := range s.sessions {
 		if sess == nil {
 			delete(s.sessions, id)
+			expiredIDs = append(expiredIDs, id)
 			continue
 		}
 		if now.Sub(sess.lastUsed) > codexWebsocketSessionIdleTTL {
 			delete(s.sessions, id)
 			expired = append(expired, sess)
+			expiredIDs = append(expiredIDs, id)
 		}
 	}
 	count := len(s.sessions)
 	s.mu.Unlock()
+	for _, id := range expiredIDs {
+		s.notifyEvicted(id)
+	}
 	closeCodexWebsocketSessions(expired, "session_idle")
 
 	if count <= codexWebsocketSessionStoreMaxSessions {
@@ -947,7 +1010,7 @@ func (e *CodexWebsocketsExecutor) readUpstreamLoop(sess *codexWebsocketSession, 
 			if isTerminalEvent(eventType) && eventType != "error" && responseID.Type == gjson.String && responseID.String() != "" {
 				sess.activeMu.Lock()
 				if sess.responseStateConn == conn {
-					sess.terminalResponseIDs[responseID.String()] = struct{}{}
+					sess.terminalResponseIDs.add(responseID.String())
 				}
 				sess.activeMu.Unlock()
 			}

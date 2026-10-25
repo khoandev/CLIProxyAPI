@@ -117,7 +117,7 @@ func TestAlignClaudeToolResults(t *testing.T) {
 			{"type":"tool_result","tool_use_id":"call_1","content":"one"}
 		]`)
 		aligned := AlignClaudeToolResults(input, []string{"call_1", "call_2"})
-		parts := aligned.Array()
+		parts := gjson.ParseBytes(aligned).Array()
 		if len(parts) != 3 {
 			t.Fatalf("len(parts) = %d, want 3", len(parts))
 		}
@@ -137,7 +137,7 @@ func TestAlignClaudeToolResults(t *testing.T) {
 			{"type":"tool_result","tool_use_id":"call_1","content":"one"}
 		]`)
 		leadingAligned := AlignClaudeToolResults(leadingTextInput, []string{"call_1", "call_2"})
-		leadingParts := leadingAligned.Array()
+		leadingParts := gjson.ParseBytes(leadingAligned).Array()
 		if len(leadingParts) != 3 {
 			t.Fatalf("len(leadingParts) = %d, want 3", len(leadingParts))
 		}
@@ -152,32 +152,36 @@ func TestAlignClaudeToolResults(t *testing.T) {
 		}
 	})
 
-	t.Run("returns original content when count mismatches", func(t *testing.T) {
+	t.Run("returns nil when count mismatches", func(t *testing.T) {
 		input := gjson.Parse(`[
 			{"type":"tool_result","tool_use_id":"call_1","content":"one"}
 		]`)
-		aligned := AlignClaudeToolResults(input, []string{"call_1", "call_2"})
-		if aligned.Raw != input.Raw {
-			t.Fatalf("aligned = %s, want %s", aligned.Raw, input.Raw)
+		if aligned := AlignClaudeToolResults(input, []string{"call_1", "call_2"}); aligned != nil {
+			t.Fatalf("aligned = %s, want nil", aligned)
 		}
 	})
 
-	t.Run("returns original content when id not found", func(t *testing.T) {
+	t.Run("returns nil when id not found", func(t *testing.T) {
 		input := gjson.Parse(`[
 			{"type":"tool_result","tool_use_id":"call_unknown","content":"unknown"},
 			{"type":"tool_result","tool_use_id":"call_1","content":"one"}
 		]`)
-		aligned := AlignClaudeToolResults(input, []string{"call_1", "call_2"})
-		if aligned.Raw != input.Raw {
-			t.Fatalf("aligned = %s, want %s", aligned.Raw, input.Raw)
+		if aligned := AlignClaudeToolResults(input, []string{"call_1", "call_2"}); aligned != nil {
+			t.Fatalf("aligned = %s, want nil", aligned)
 		}
 	})
 
-	t.Run("returns original content for non-array", func(t *testing.T) {
+	t.Run("returns nil for non-array", func(t *testing.T) {
 		input := gjson.Parse(`"text content"`)
-		aligned := AlignClaudeToolResults(input, []string{"call_1"})
-		if aligned.Raw != input.Raw {
-			t.Fatalf("aligned = %s, want %s", aligned.Raw, input.Raw)
+		if aligned := AlignClaudeToolResults(input, []string{"call_1"}); aligned != nil {
+			t.Fatalf("aligned = %s, want nil", aligned)
+		}
+	})
+
+	t.Run("returns nil when no tool_use ids", func(t *testing.T) {
+		input := gjson.Parse(`[{"type":"text","text":"only text"}]`)
+		if aligned := AlignClaudeToolResults(input, nil); aligned != nil {
+			t.Fatalf("aligned = %s, want nil", aligned)
 		}
 	})
 }

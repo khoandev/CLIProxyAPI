@@ -11,6 +11,39 @@ import (
 // SharedRequestBodyContextKey caches the raw request body on the gin context.
 const SharedRequestBodyContextKey = "cpa.requestBody.shared"
 
+// DecodedRequestBodyContextKey caches the request body after Content-Encoding
+// decoding on the gin context.
+const DecodedRequestBodyContextKey = "cpa.requestBody.decoded"
+
+// CachedDecodedRequestBody returns the body that was already decoded for this
+// request. The logging middleware decodes before the handler runs, so sharing
+// the result keeps a compressed body from being decompressed twice.
+//
+// The returned slice is shared, so it must not be modified in place.
+func CachedDecodedRequestBody(c *gin.Context) ([]byte, bool) {
+	if c == nil {
+		return nil, false
+	}
+	cached, ok := c.Get(DecodedRequestBodyContextKey)
+	if !ok {
+		return nil, false
+	}
+	body, ok := cached.([]byte)
+	if !ok || len(body) == 0 {
+		return nil, false
+	}
+	return body, true
+}
+
+// SetDecodedRequestBody caches the decoded request body for this request.
+// Callers must not cache a partial or failed decode.
+func SetDecodedRequestBody(c *gin.Context, body []byte) {
+	if c == nil || len(body) == 0 {
+		return
+	}
+	c.Set(DecodedRequestBodyContextKey, body)
+}
+
 // ErrNilRequestBody is returned when the request carries no body reader.
 var ErrNilRequestBody = errors.New("cannot read nil body")
 

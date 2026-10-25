@@ -140,6 +140,9 @@ func TestAPIResponseAttemptsAreSeparated(t *testing.T) {
 					t.Fatalf("responseSource.Bytes: %v", errBytes)
 				}
 			} else {
+				// The response writer publishes the aggregate when the response
+				// completes, so mirror that call here.
+				AggregateAPIResponse(ginCtx)
 				value, exists := ginCtx.Get(apiResponseKey)
 				if !exists {
 					t.Fatal("API_RESPONSE was not captured")

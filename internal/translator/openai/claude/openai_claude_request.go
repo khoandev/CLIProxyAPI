@@ -178,14 +178,16 @@ func convertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 			// Handle content
 			if contentResult.Exists() && contentResult.IsArray() {
 				if role == "user" && len(pendingToolUseIDs) > 0 {
-					contentResult = translatorcommon.AlignClaudeToolResults(contentResult, pendingToolUseIDs)
+					if aligned := translatorcommon.AlignClaudeToolResults(contentResult, pendingToolUseIDs); aligned != nil {
+						contentResult = util.ParseGJSONBytesNoCopy(aligned)
+					}
 				}
 				precedingToolCallsPending := len(pendingToolUseIDs) > 0
 				pendingToolUseIDs = nil
 
 				contentItems := make([][]byte, 0)
 				var reasoningParts []string // Accumulate thinking text for reasoning_content
-				var toolCalls []interface{}
+				var toolCalls [][]byte
 				toolResults := make([][]byte, 0)       // Collect tool_result messages to emit after the main message
 				relayedToolImages := make([][]byte, 0) // Images pulled out of tool_result content for user-message relay
 
@@ -239,7 +241,7 @@ func convertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 								toolCallJSON, _ = sjson.SetBytes(toolCallJSON, "function.arguments", "{}")
 							}
 
-							toolCalls = append(toolCalls, util.ParseGJSONBytesNoCopy(toolCallJSON).Value())
+							toolCalls = append(toolCalls, toolCallJSON)
 						}
 
 					case "tool_result":
@@ -328,7 +330,7 @@ func convertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 
 						// Add tool_calls if present (in same message as content)
 						if hasToolCalls {
-							msgJSON, _ = sjson.SetBytes(msgJSON, "tool_calls", toolCalls)
+							msgJSON, _ = sjson.SetRawBytes(msgJSON, "tool_calls", translatorcommon.JoinRawArray(toolCalls))
 						}
 
 						messageItems = append(messageItems, msgJSON)
@@ -360,12 +362,6 @@ func convertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 		if len(pendingSystemReminders) > 0 {
 			messageItems = append(messageItems, pendingSystemReminders...)
 		}
-	}
-
-	// Set messages.
-	if len(messageItems) > 0 {
-		messageItems = translatorcommon.AlignOpenAIToolCallMessages(messageItems)
-		out = translatorcommon.SetRawArrayItems(out, "messages", messageItems)
 	}
 
 	// Process tools - convert Anthropic tools to OpenAI functions
@@ -428,6 +424,15 @@ func convertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 	// Handle user parameter (for tracking)
 	if user := root.Get("user"); user.Exists() {
 		out, _ = sjson.SetBytes(out, "user", user.String())
+	}
+
+	// Set messages last: every field above is appended to the small template, and
+	// the single large array is spliced into place afterwards. Splicing keeps the
+	// array at its template position, so the output is unchanged while the other
+	// field writes no longer rebuild a multi-hundred-KB document each time.
+	if len(messageItems) > 0 {
+		messageItems = translatorcommon.AlignOpenAIToolCallMessages(messageItems)
+		out = translatorcommon.SetRawArrayItems(out, "messages", messageItems)
 	}
 
 	return out, drops.Err()

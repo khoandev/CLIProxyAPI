@@ -16,8 +16,18 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/httpwire"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	log "github.com/sirupsen/logrus"
 )
+
+// maxCapturedResponseBodyBytes bounds the non-streaming response body kept for
+// request logs. The request body is capped the same way; without a cap a single
+// large response stays resident in full.
+const maxCapturedResponseBodyBytes = 1 << 20
+
+// responseBodyTruncatedMarker is appended to a truncated captured body so a log
+// reader can tell the body was cut.
+var responseBodyTruncatedMarker = []byte("\n[TRUNCATED]")
 
 const requestBodyOverrideContextKey = "REQUEST_BODY_OVERRIDE"
 const responseBodyOverrideContextKey = "RESPONSE_BODY_OVERRIDE"
@@ -39,6 +49,7 @@ type RequestInfo struct {
 type ResponseWriterWrapper struct {
 	gin.ResponseWriter
 	body                *bytes.Buffer              // body is a buffer to store the response body for non-streaming responses.
+	bodyTruncated       bool                       // bodyTruncated records that the captured body hit its byte cap.
 	isStreaming         bool                       // isStreaming indicates whether the response is a streaming type (e.g., text/event-stream).
 	streamWriter        logging.StreamingLogWriter // streamWriter is a writer for handling streaming log entries.
 	logger              logging.RequestLogger      // logger is the instance of the request logger service.
@@ -96,7 +107,7 @@ func (w *ResponseWriterWrapper) Write(data []byte) (int, error) {
 	}
 
 	if w.shouldBufferResponseBody() {
-		w.bodyBuffer().Write(data)
+		w.captureResponseBody(data)
 	}
 
 	return n, err
@@ -145,7 +156,7 @@ func (w *ResponseWriterWrapper) WriteString(data string) (int, error) {
 	}
 
 	if w.shouldBufferResponseBody() {
-		w.bodyBuffer().WriteString(data)
+		w.captureResponseBodyString(data)
 	}
 	return n, err
 }
@@ -289,6 +300,10 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 		cleanupFileBodySources(websocketTimelineSource, apiRequestSource, apiResponseSource, apiWebsocketTimelineSource)
 		return nil
 	}
+
+	// Streaming chunks no longer rebuild the aggregate, so publish it once here,
+	// before the response body is read for logging.
+	helps.AggregateAPIResponse(c)
 
 	if w.isStreaming && w.streamWriter != nil {
 		w.streamWriter.SetFirstChunkTimestamp(w.firstChunkTimestamp)
@@ -477,7 +492,7 @@ func (w *ResponseWriterWrapper) extractRequestBody(c *gin.Context) []byte {
 			break
 		}
 	}
-	body = decodeCapturedRequestBodyForLogWithLimit(body, encoding, maxDeferredErrorRequestBodyBytes)
+	body, _ = decodeCapturedRequestBodyForLogWithLimit(body, encoding, maxDeferredErrorRequestBodyBytes)
 	if statusMarker == "" {
 		return body
 	}
@@ -494,6 +509,11 @@ func (w *ResponseWriterWrapper) extractResponseBody(c *gin.Context) []byte {
 	if w.body == nil || w.body.Len() == 0 {
 		return nil
 	}
+	if w.bodyTruncated {
+		body := make([]byte, 0, w.body.Len()+len(responseBodyTruncatedMarker))
+		body = append(body, w.body.Bytes()...)
+		return append(body, responseBodyTruncatedMarker...)
+	}
 	return bytes.Clone(w.body.Bytes())
 }
 
@@ -505,6 +525,37 @@ func (w *ResponseWriterWrapper) bodyBuffer() *bytes.Buffer {
 		w.body = &bytes.Buffer{}
 	}
 	return w.body
+}
+
+// captureResponseBody keeps at most maxCapturedResponseBodyBytes of the response
+// body and flags the truncation so the log can say so.
+func (w *ResponseWriterWrapper) captureResponseBody(data []byte) {
+	buf := w.bodyBuffer()
+	remaining := maxCapturedResponseBodyBytes - buf.Len()
+	if remaining <= 0 {
+		w.bodyTruncated = true
+		return
+	}
+	if len(data) > remaining {
+		data = data[:remaining]
+		w.bodyTruncated = true
+	}
+	buf.Write(data)
+}
+
+// captureResponseBodyString is captureResponseBody for the io.StringWriter path.
+func (w *ResponseWriterWrapper) captureResponseBodyString(data string) {
+	buf := w.bodyBuffer()
+	remaining := maxCapturedResponseBodyBytes - buf.Len()
+	if remaining <= 0 {
+		w.bodyTruncated = true
+		return
+	}
+	if len(data) > remaining {
+		data = data[:remaining]
+		w.bodyTruncated = true
+	}
+	buf.WriteString(data)
 }
 
 func (w *ResponseWriterWrapper) extractWebsocketTimeline(c *gin.Context) []byte {

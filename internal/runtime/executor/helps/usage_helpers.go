@@ -65,6 +65,9 @@ type UsageReporter struct {
 	// responseModelFinal marks that a terminal event already reported the served
 	// model, so later frames skip parsing entirely.
 	responseModelFinal atomic.Bool
+	// responseModelSeen marks that a model name was already reported, which lets
+	// frames that cannot carry a model skip parsing.
+	responseModelSeen atomic.Bool
 
 	upstreamModelMu sync.RWMutex
 	// upstreamModel holds the canonical upstream model expected to be served when
@@ -216,6 +219,17 @@ func (r *UsageReporter) ObserveResponseModel(payload []byte) {
 	if r == nil || r.responseModelFinal.Load() {
 		return
 	}
+	// Once the model is known, only a frame carrying a type or terminal marker can
+	// still change the reporter state, so plain content deltas stop paying for
+	// parsing. The terminal markers keep finishReason/status frames (which carry no
+	// type field) able to finalize the model and stop the observer early.
+	if r.responseModelSeen.Load() &&
+		!bytes.Contains(payload, []byte(`"type"`)) &&
+		!bytes.Contains(payload, []byte("finishReason")) &&
+		!bytes.Contains(payload, []byte(`"event_type"`)) &&
+		!bytes.Contains(payload, []byte(`"status"`)) {
+		return
+	}
 	provider := ""
 	if r != nil {
 		provider = r.provider
@@ -230,6 +244,7 @@ func (r *UsageReporter) ObserveResponseModel(payload []byte) {
 	r.responseModelMu.Lock()
 	r.responseModel = served
 	r.responseModelMu.Unlock()
+	r.responseModelSeen.Store(true)
 	if terminal {
 		r.responseModelFinal.Store(true)
 	}
@@ -247,6 +262,7 @@ func (r *UsageReporter) SetResponseModel(model string) {
 	r.responseModelMu.Lock()
 	r.responseModel = model
 	r.responseModelMu.Unlock()
+	r.responseModelSeen.Store(true)
 }
 
 // SetUpstreamModel records the upstream model expected to be served when it differs
@@ -1620,6 +1636,11 @@ func rememberStopWithoutUsage(traceID string) {
 // function is shared between aistudio and antigravity executors.
 func FilterSSEUsageMetadata(payload []byte) []byte {
 	if len(payload) == 0 {
+		return payload
+	}
+	// Only a usage block or a finishReason can change this payload, so every
+	// other frame is returned untouched without scanning its lines.
+	if !bytes.Contains(payload, []byte(`"usage`)) && !bytes.Contains(payload, []byte("finishReason")) {
 		return payload
 	}
 

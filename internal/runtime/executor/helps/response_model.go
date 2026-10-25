@@ -1,6 +1,7 @@
 package helps
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
@@ -58,6 +59,11 @@ func extractClaudeResponseModelEvent(data []byte) (model string, terminal bool) 
 		}
 		return "", true
 	default:
+		// A frame without the model key cannot report a model, and every
+		// terminal branch below also needs it.
+		if !bytes.Contains(data, []byte(`"model"`)) {
+			return "", false
+		}
 		if !gjson.ValidBytes(data) {
 			return "", false
 		}
@@ -78,6 +84,18 @@ func extractClaudeResponseModelEvent(data []byte) (model string, terminal bool) 
 
 // extractGeminiResponseModelEvent extracts the response model from a Google Gemini / Vertex / AIStudio response.
 func extractGeminiResponseModelEvent(data []byte) (model string, terminal bool) {
+	// Every branch below needs one of these keys, so a frame that carries none of
+	// them cannot report a model or a terminal state.
+	// "event_type" is listed separately because it does not contain the `"type"`
+	// needle (the quote anchors it to the start of the key).
+	if !bytes.Contains(data, []byte(`"model`)) && // "model" or "modelVersion"
+		!bytes.Contains(data, []byte("finishReason")) && // candidates.0.finishReason
+		!bytes.Contains(data, []byte(`"object"`)) && // chat.completion
+		!bytes.Contains(data, []byte(`"event_type"`)) &&
+		!bytes.Contains(data, []byte(`"type"`)) &&
+		!bytes.Contains(data, []byte(`"status"`)) {
+		return "", false
+	}
 	if !gjson.ValidBytes(data) {
 		return "", false
 	}
@@ -121,6 +139,17 @@ func extractGeminiResponseModelEvent(data []byte) (model string, terminal bool) 
 
 // extractGenericResponseModelEvent extracts the response model from standard JSON / SSE responses.
 func extractGenericResponseModelEvent(data []byte) (model string, terminal bool) {
+	// Every branch that reports a model needs the model key, and the terminal
+	// branches need one of the event/status keys, so a frame carrying none of
+	// them is answered without parsing.
+	// "event_type" is listed separately because it does not contain the `"type"`
+	// needle (the quote anchors it to the start of the key).
+	if !bytes.Contains(data, []byte(`"model`)) && // "model" or "modelVersion"
+		!bytes.Contains(data, []byte(`"event_type"`)) &&
+		!bytes.Contains(data, []byte(`"type"`)) &&
+		!bytes.Contains(data, []byte(`"status"`)) {
+		return "", false
+	}
 	if !gjson.ValidBytes(data) {
 		return "", false
 	}

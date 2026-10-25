@@ -17,6 +17,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
@@ -116,6 +117,8 @@ func TestHostHTTPDoCallbackRestoresRegisteredRequestContext(t *testing.T) {
 		t.Fatalf("API_REQUEST = %q, want upstream request details", apiRequest)
 	}
 
+	// The response writer publishes the aggregate when the response completes.
+	helps.AggregateAPIResponse(ginCtx)
 	rawAPIResponse, okResponse := ginCtx.Get("API_RESPONSE")
 	if !okResponse {
 		t.Fatal("API_RESPONSE was not captured on the original Gin context")

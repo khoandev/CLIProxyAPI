@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executionregistry"
 )
@@ -109,6 +110,8 @@ func TestHandleHangupReportsUnauthorizedWhenResponseReadFails(t *testing.T) {
 	var apiResponse []byte
 	router.Use(func(c *gin.Context) {
 		c.Next()
+		// The response writer publishes the aggregate when the response completes.
+		helps.AggregateAPIResponse(c)
 		if raw, exists := c.Get("API_RESPONSE"); exists {
 			apiResponse, _ = raw.([]byte)
 		}

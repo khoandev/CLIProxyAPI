@@ -80,51 +80,60 @@ func (a *ClaudeMessageAccumulator) Messages() [][]byte {
 }
 
 // AlignClaudeToolResults orders tool_result blocks by the preceding tool_use IDs,
-// preserving non-result content blocks at their existing indexes. If a complete
-// one-to-one match is unavailable, the original content is returned.
-func AlignClaudeToolResults(content gjson.Result, toolUseIDs []string) gjson.Result {
+// preserving non-result content blocks at their existing indexes. It returns nil
+// when the content needs no reordering, so callers keep the original
+// gjson.Result and pay no copy at all.
+func AlignClaudeToolResults(content gjson.Result, toolUseIDs []string) []byte {
 	if !content.IsArray() || len(toolUseIDs) == 0 {
-		return content
+		return nil
 	}
 
 	parts := content.Array()
-	toolResults := make([]gjson.Result, 0, len(toolUseIDs))
 	toolResultIndices := make([]int, 0, len(toolUseIDs))
 	for i, part := range parts {
 		if part.Get("type").String() == "tool_result" {
-			toolResults = append(toolResults, part)
 			toolResultIndices = append(toolResultIndices, i)
 		}
 	}
-	if len(toolResults) != len(toolUseIDs) {
-		return content
+	if len(toolResultIndices) != len(toolUseIDs) {
+		return nil
 	}
 
-	reorderedResults := make([]gjson.Result, 0, len(toolUseIDs))
-	used := make([]bool, len(toolResults))
-	for _, toolUseID := range toolUseIDs {
+	// ordered maps each output slot to the index of the part it receives.
+	ordered := make([]int, len(parts))
+	for i := range ordered {
+		ordered[i] = i
+	}
+	used := make([]bool, len(toolResultIndices))
+	for i, toolUseID := range toolUseIDs {
 		matched := -1
-		for resultIndex, toolResult := range toolResults {
-			if !used[resultIndex] && toolUseID != "" && toolResult.Get("tool_use_id").String() == toolUseID {
+		for resultIndex, partIndex := range toolResultIndices {
+			if !used[resultIndex] && toolUseID != "" && parts[partIndex].Get("tool_use_id").String() == toolUseID {
 				matched = resultIndex
 				break
 			}
 		}
 		if matched < 0 {
-			return content
+			return nil
 		}
 		used[matched] = true
-		reorderedResults = append(reorderedResults, toolResults[matched])
+		ordered[toolResultIndices[i]] = toolResultIndices[matched]
 	}
 
-	ordered := make([][]byte, len(parts))
-	for i, part := range parts {
-		ordered[i] = []byte(part.Raw)
+	size := len(parts) + 1
+	for _, part := range parts {
+		size += len(part.Raw)
 	}
-	for i, slotIndex := range toolResultIndices {
-		ordered[slotIndex] = []byte(reorderedResults[i].Raw)
+	out := make([]byte, 0, size)
+	out = append(out, '[')
+	for i, partIndex := range ordered {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, parts[partIndex].Raw...)
 	}
-	return gjson.ParseBytes(JoinRawArray(ordered))
+	out = append(out, ']')
+	return out
 }
 
 func claudeMessageContentParts(content gjson.Result) [][]byte {

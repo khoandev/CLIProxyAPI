@@ -1048,6 +1048,22 @@ func claudeResponseContentEncoding(header http.Header) string {
 	return strings.Join(header.Values("Content-Encoding"), ",")
 }
 
+// maxResponseZstdWindowBytes bounds the window a response stream may use. The
+// decoder allocates its window per response, so an unusual frame must not be able
+// to reserve more than this on a small host.
+const maxResponseZstdWindowBytes = 8 << 20
+
+// responseZstdDecoderOptions keeps a response decoder cheap: one goroutine and a
+// low-memory pipeline instead of a GOMAXPROCS-wide parallel one per stream, plus a
+// bounded window.
+func responseZstdDecoderOptions() []zstd.DOption {
+	return []zstd.DOption{
+		zstd.WithDecoderConcurrency(1),
+		zstd.WithDecoderLowmem(true),
+		zstd.WithDecoderMaxWindow(maxResponseZstdWindowBytes),
+	}
+}
+
 func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadCloser, error) {
 	if body == nil {
 		return nil, fmt.Errorf("response body is nil")
@@ -1077,7 +1093,7 @@ func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadClos
 					},
 				}, nil
 			case len(magic) >= 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f && magic[3] == 0xfd:
-				decoder, zdErr := zstd.NewReader(pb)
+				decoder, zdErr := zstd.NewReader(pb, responseZstdDecoderOptions()...)
 				if zdErr != nil {
 					_ = pb.Close()
 					return nil, fmt.Errorf("magic-byte zstd: failed to create reader: %w", zdErr)
@@ -1126,7 +1142,7 @@ func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadClos
 		case "br":
 			reader = brotli.NewReader(reader)
 		case "zstd":
-			decoder, errZstd := zstd.NewReader(reader)
+			decoder, errZstd := zstd.NewReader(reader, responseZstdDecoderOptions()...)
 			if errZstd != nil {
 				cleanup()
 				return nil, fmt.Errorf("failed to create zstd reader: %w", errZstd)
@@ -2833,7 +2849,14 @@ func reverseRemapOAuthToolNamesFromStreamLine(line []byte, reverseMap map[string
 		return line, nil
 	}
 	payload := helps.JSONPayload(line)
-	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if len(payload) == 0 {
+		return line, nil
+	}
+	// Only a content_block frame can carry a tool name to remap.
+	if !bytes.Contains(payload, []byte(`"content_block"`)) {
+		return line, nil
+	}
+	if !gjson.ValidBytes(payload) {
 		return line, nil
 	}
 

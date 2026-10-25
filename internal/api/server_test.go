@@ -442,6 +442,8 @@ func TestHomeCodexAlphaSearchForwardsUnauthorizedResponseWithoutRefresh(t *testi
 	if got := dispatcher.calls.Load(); got != 1 {
 		t.Fatalf("Home RPOP calls = %d, want 1", got)
 	}
+	// The response writer publishes the aggregate when the response completes.
+	runtimehelps.AggregateAPIResponse(c)
 	rawAPIResponse, okResponse := c.Get("API_RESPONSE")
 	if !okResponse {
 		t.Fatal("API_RESPONSE was not captured")
@@ -534,6 +536,8 @@ func TestHomeCodexAlphaSearchRequestLogPreservesBodyReturnedWithReadError(t *tes
 	if recorder.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusBadGateway, recorder.Body.String())
 	}
+	// The response writer publishes the aggregate when the response completes.
+	runtimehelps.AggregateAPIResponse(c)
 	rawAPIResponse, okResponse := c.Get("API_RESPONSE")
 	apiResponse, _ := rawAPIResponse.([]byte)
 	if !okResponse || !strings.Contains(string(apiResponse), upstreamError) || !strings.Contains(string(apiResponse), io.ErrUnexpectedEOF.Error()) {
@@ -1561,6 +1565,8 @@ func TestCodexAlphaSearchRecordsRequestLog(t *testing.T) {
 	if !strings.Contains(string(apiRequest), `{"query":"GPT-5.6"}`) {
 		t.Fatalf("API_REQUEST missing body: %q", apiRequest)
 	}
+	// The response writer publishes the aggregate when the response completes.
+	runtimehelps.AggregateAPIResponse(c)
 	rawAPIResponse, okResponse := c.Get("API_RESPONSE")
 	if !okResponse {
 		t.Fatal("API_RESPONSE was not captured")

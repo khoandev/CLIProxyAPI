@@ -19,6 +19,11 @@ func EnsureResponsesUsageDetails(payload []byte) []byte {
 	if len(trimmed) == 0 {
 		return payload
 	}
+	// The function only fills in fields inside an existing usage object, so a
+	// payload without the usage key cannot change.
+	if !bytes.Contains(payload, []byte(`"usage"`)) {
+		return payload
+	}
 
 	// 1. JSON-first: If trimmed payload starts with '{', process as a plain JSON object.
 	if trimmed[0] == '{' {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,17 +43,42 @@ var globalXAIWebsocketIDStates = &xaiWebsocketIDStateStore{
 	sessions: make(map[string]*xaiWebsocketIDState),
 }
 
+func init() {
+	// The id state is keyed by the same session ids as the websocket sessions, so
+	// it must not outlive the session that owns it. Without this hook the id state
+	// survives every eviction and the store grows without bound.
+	globalXAIWebsocketSessionStore.onEvict = func(sessionID string) {
+		deleteXAIWebsocketIDState(globalXAIWebsocketIDStates, sessionID)
+	}
+}
+
+const (
+	// xaiWebsocketTranscriptMaxBytes bounds the replay transcript kept per session
+	// so a long conversation cannot grow resident memory without end.
+	xaiWebsocketTranscriptMaxBytes = 8 << 20
+	// xaiWebsocketTranscriptMaxItems bounds the transcript item count per session
+	// independently of their size.
+	xaiWebsocketTranscriptMaxItems = 256
+	// xaiWebsocketIDMapMaxEntries bounds the downstream->upstream id map. The
+	// entries only serve the rewrite of very old turns, so dropping the whole map
+	// is enough; no ordering state is needed.
+	xaiWebsocketIDMapMaxEntries = 512
+)
+
 type xaiWebsocketIDStateStore struct {
 	mu       sync.Mutex
 	sessions map[string]*xaiWebsocketIDState
 }
 
 type xaiWebsocketIDState struct {
-	requestMu                        sync.Mutex
-	mu                               sync.Mutex
+	requestMu sync.Mutex
+	mu        sync.Mutex
+	// lastUsed is guarded by the owning store mutex, not by mu.
+	lastUsed                         time.Time
 	downstreamToUpstream             map[string]string
 	sequence                         int
 	transcriptInput                  []json.RawMessage
+	transcriptBytes                  int
 	replayCompactedTranscriptOnReset bool
 }
 
@@ -78,19 +104,57 @@ func getXAIWebsocketIDState(store *xaiWebsocketIDStateStore, sessionID string) *
 	if sessionID == "" || store == nil {
 		return nil
 	}
+	now := time.Now()
 	store.mu.Lock()
-	defer store.mu.Unlock()
 	if store.sessions == nil {
 		store.sessions = make(map[string]*xaiWebsocketIDState)
 	}
-	if state := store.sessions[sessionID]; state != nil {
-		return state
+	state := store.sessions[sessionID]
+	if state == nil {
+		state = &xaiWebsocketIDState{
+			downstreamToUpstream: make(map[string]string),
+		}
+		store.sessions[sessionID] = state
 	}
-	state := &xaiWebsocketIDState{
-		downstreamToUpstream: make(map[string]string),
-	}
-	store.sessions[sessionID] = state
+	state.lastUsed = now
+	store.mu.Unlock()
+
+	// Evict after the update so the bound also holds right after an insert.
+	store.evictExcessSessions(now)
 	return state
+}
+
+// evictExcessSessions drops the id states that stayed idle for too long and the
+// least recently used ones beyond the store bound. It mirrors the websocket
+// session store so both stores stay bounded together.
+func (s *xaiWebsocketIDStateStore) evictExcessSessions(now time.Time) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, state := range s.sessions {
+		if state == nil || now.Sub(state.lastUsed) > codexWebsocketSessionIdleTTL {
+			delete(s.sessions, id)
+		}
+	}
+	if len(s.sessions) <= codexWebsocketSessionStoreMaxSessions {
+		return
+	}
+	type idStateEntry struct {
+		sessionID string
+		lastUsed  time.Time
+	}
+	entries := make([]idStateEntry, 0, len(s.sessions))
+	for id, state := range s.sessions {
+		entries = append(entries, idStateEntry{sessionID: id, lastUsed: state.lastUsed})
+	}
+	slices.SortFunc(entries, func(a, b idStateEntry) int {
+		return a.lastUsed.Compare(b.lastUsed)
+	})
+	for i := 0; i < len(entries) && len(s.sessions) > codexWebsocketSessionStoreMaxSessions; i++ {
+		delete(s.sessions, entries[i].sessionID)
+	}
 }
 
 func deleteXAIWebsocketIDState(store *xaiWebsocketIDStateStore, sessionID string) {
@@ -191,13 +255,42 @@ func (s *xaiWebsocketIDState) recordTranscriptTurn(requestPayload []byte, comple
 	defer s.mu.Unlock()
 	if reset {
 		s.transcriptInput = nil
+		s.transcriptBytes = 0
 		s.replayCompactedTranscriptOnReset = false
 	}
 	if len(inputItems) == 0 && len(outputItems) == 0 {
 		return
 	}
+	added := 0
+	for _, item := range inputItems {
+		added += len(item)
+	}
+	for _, item := range outputItems {
+		added += len(item)
+	}
 	s.transcriptInput = append(s.transcriptInput, inputItems...)
 	s.transcriptInput = append(s.transcriptInput, outputItems...)
+	s.transcriptBytes += added
+	s.trimTranscriptLocked()
+}
+
+// trimTranscriptLocked drops the oldest transcript items until both the item and
+// byte caps hold. Callers must hold s.mu.
+func (s *xaiWebsocketIDState) trimTranscriptLocked() {
+	drop := 0
+	for drop < len(s.transcriptInput) &&
+		(len(s.transcriptInput)-drop > xaiWebsocketTranscriptMaxItems || s.transcriptBytes > xaiWebsocketTranscriptMaxBytes) {
+		s.transcriptBytes -= len(s.transcriptInput[drop])
+		drop++
+	}
+	if drop == 0 {
+		return
+	}
+	// Rebuild instead of reslicing: a reslice keeps the dropped items reachable
+	// through the backing array.
+	kept := make([]json.RawMessage, len(s.transcriptInput)-drop)
+	copy(kept, s.transcriptInput[drop:])
+	s.transcriptInput = kept
 }
 
 func (s *xaiWebsocketIDState) replaceTranscriptWithItems(items ...[]byte) {
@@ -212,9 +305,15 @@ func (s *xaiWebsocketIDState) replaceTranscriptWithItems(items ...[]byte) {
 		}
 		next = append(next, bytes.Clone(item))
 	}
+	total := 0
+	for _, item := range next {
+		total += len(item)
+	}
 	s.mu.Lock()
 	s.transcriptInput = next
-	s.replayCompactedTranscriptOnReset = len(next) > 0
+	s.transcriptBytes = total
+	s.trimTranscriptLocked()
+	s.replayCompactedTranscriptOnReset = len(s.transcriptInput) > 0
 	s.mu.Unlock()
 }
 
@@ -340,6 +439,11 @@ func (m *xaiWebsocketRequestIDMapper) downstreamIDForUpstreamResponse(upstreamRe
 	}
 	m.state.downstreamToUpstream[upstreamResponseID] = upstreamResponseID
 	m.state.downstreamToUpstream[m.downstreamResponseID] = upstreamResponseID
+	if len(m.state.downstreamToUpstream) > xaiWebsocketIDMapMaxEntries {
+		// The map only serves id rewrites of old turns, so dropping it wholesale is
+		// enough and keeps the state bounded.
+		clear(m.state.downstreamToUpstream)
+	}
 	return m.downstreamResponseID
 }
 

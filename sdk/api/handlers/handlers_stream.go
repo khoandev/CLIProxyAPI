@@ -904,14 +904,19 @@ func streamDeliveryCompletion(ctx context.Context, outcome pluginapi.RequestComp
 	return pluginapi.RequestCompletionFailed, executionErrorMessage(deliveryErr).StatusCode, deliveryErr
 }
 
-// WriteSSEData writes one SSE data frame ("data: <chunk>\n\n") in a single
-// Write call. Callers use it instead of fmt.Fprintf, which allocates the string
-// conversion plus fmt's internal buffer for every streamed chunk.
-func WriteSSEData(w io.Writer, chunk []byte) error {
-	buf := make([]byte, 0, len(chunk)+8)
-	buf = append(buf, "data: "...)
-	buf = append(buf, chunk...)
-	buf = append(buf, '\n', '\n')
-	_, err := w.Write(buf)
+// SSEFrameWriter writes SSE data frames ("data: <chunk>\n\n") while reusing one
+// buffer for the whole stream. Writes are synchronous, so the buffer is free
+// again when Write returns. The zero value is ready to use; a writer is not safe
+// for concurrent use.
+type SSEFrameWriter struct {
+	buf []byte
+}
+
+// Write emits one data frame in a single Write call.
+func (f *SSEFrameWriter) Write(w io.Writer, chunk []byte) error {
+	f.buf = append(f.buf[:0], "data: "...)
+	f.buf = append(f.buf, chunk...)
+	f.buf = append(f.buf, '\n', '\n')
+	_, err := w.Write(f.buf)
 	return err
 }

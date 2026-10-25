@@ -10,9 +10,11 @@ import (
 )
 
 // defaultSpoolMemoryLimit is the payload size a spool keeps in memory before it
-// spills to a temporary file. 1 MiB keeps short request/response bodies off the
-// filesystem without meaningfully raising the process footprint.
-const defaultSpoolMemoryLimit = 1 << 20
+// spills to a temporary file. Every stream that is being logged holds this much
+// (twice that while the buffer doubles), so it stays small: 64 KiB keeps short
+// bodies off the filesystem, matches the 64 KiB write buffer used after the
+// spill, and costs no extra temp file — only an earlier spill.
+const defaultSpoolMemoryLimit = 64 << 10
 
 // bodySpool accumulates a payload in memory and spills to a temporary file in
 // dir once the in-memory buffer would exceed limit. Each streaming request owns

@@ -151,7 +151,9 @@ func appendClaudeMessagesToInteractions(out []byte, messages gjson.Result, prese
 		}
 
 		if role == "user" && len(pendingToolUseIDs) > 0 && content.IsArray() {
-			content = translatorcommon.AlignClaudeToolResults(content, pendingToolUseIDs)
+			if aligned := translatorcommon.AlignClaudeToolResults(content, pendingToolUseIDs); aligned != nil {
+				content = util.ParseGJSONBytesNoCopy(aligned)
+			}
 		}
 		pendingToolUseIDs = nil
 

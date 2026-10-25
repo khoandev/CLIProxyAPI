@@ -342,11 +342,21 @@ func captureRequestInfo(c *gin.Context, captureBody bool) (*RequestInfo, error) 
 			return nil, err
 		}
 
-		maxBytes := c.GetInt64("maxRequestBodyBytes")
-		if maxBytes > 0 {
-			body = decodeCapturedRequestBodyForLogWithLimit(bodyBytes, c.Request.Header.Get("Content-Encoding"), maxBytes)
+		if cached, ok := util.CachedDecodedRequestBody(c); ok {
+			body = cached
 		} else {
-			body = decodeCapturedRequestBodyForLog(bodyBytes, c.Request.Header.Get("Content-Encoding"))
+			fullyDecoded := false
+			maxBytes := c.GetInt64("maxRequestBodyBytes")
+			if maxBytes > 0 {
+				body, fullyDecoded = decodeCapturedRequestBodyForLogWithLimit(bodyBytes, c.Request.Header.Get("Content-Encoding"), maxBytes)
+			} else {
+				body, fullyDecoded = decodeCapturedRequestBodyForLog(bodyBytes, c.Request.Header.Get("Content-Encoding"))
+			}
+			// A truncated or failed decode is not the request body, so only a
+			// complete decode is shared with the handler.
+			if fullyDecoded {
+				util.SetDecodedRequestBody(c, body)
+			}
 		}
 	}
 
@@ -360,25 +370,27 @@ func captureRequestInfo(c *gin.Context, captureBody bool) (*RequestInfo, error) 
 	}, nil
 }
 
-func decodeCapturedRequestBodyForLog(raw []byte, encoding string) []byte {
-	if len(raw) == 0 {
-		return raw
+// decodeCapturedRequestBodyForLog decodes a captured request body for logging.
+// The second result reports whether the whole body was decoded, which lets the
+// caller share the result with the handler instead of decoding again.
+func decodeCapturedRequestBodyForLog(raw []byte, encoding string) ([]byte, bool) {
+	if len(raw) == 0 || isIdentityContentEncoding(encoding) {
+		return raw, false
 	}
 
 	decoded, errDecode := decodeCapturedRequestBody(raw, encoding)
 	if errDecode != nil {
-		return raw
+		return raw, false
 	}
-	return decoded
+	return decoded, true
 }
 
-func decodeCapturedRequestBodyForLogWithLimit(raw []byte, encoding string, limit int64) []byte {
-	if len(raw) == 0 || limit <= 0 {
-		return raw
-	}
-	encoding = strings.TrimSpace(encoding)
-	if encoding == "" || strings.EqualFold(encoding, "identity") {
-		return raw
+// decodeCapturedRequestBodyForLogWithLimit decodes a captured request body for
+// logging, truncating at limit. A truncated body reports false because it is not
+// the request body the handler must see.
+func decodeCapturedRequestBodyForLogWithLimit(raw []byte, encoding string, limit int64) ([]byte, bool) {
+	if len(raw) == 0 || limit <= 0 || isIdentityContentEncoding(encoding) {
+		return raw, false
 	}
 
 	parts := strings.Split(encoding, ",")
@@ -391,25 +403,29 @@ func decodeCapturedRequestBodyForLogWithLimit(raw []byte, encoding string, limit
 		case "zstd":
 			decoded, truncated, errDecode := decodeCapturedZstdRequestBodyWithLimit(body, limit)
 			if errDecode != nil {
-				return raw
+				return raw, false
 			}
 			body = decoded
 			if truncated {
 				if len(body) > 0 && !bytes.HasSuffix(body, []byte("\n")) {
 					body = append(body, '\n')
 				}
-				return append(body, "[DECOMPRESSED REQUEST BODY TRUNCATED]"...)
+				return append(body, "[DECOMPRESSED REQUEST BODY TRUNCATED]"...), false
 			}
 		default:
-			return raw
+			return raw, false
 		}
 	}
-	return body
+	return body, true
+}
+
+func isIdentityContentEncoding(encoding string) bool {
+	encoding = strings.TrimSpace(encoding)
+	return encoding == "" || strings.EqualFold(encoding, "identity")
 }
 
 func decodeCapturedRequestBody(raw []byte, encoding string) ([]byte, error) {
-	encoding = strings.TrimSpace(encoding)
-	if encoding == "" || strings.EqualFold(encoding, "identity") {
+	if isIdentityContentEncoding(encoding) {
 		return raw, nil
 	}
 

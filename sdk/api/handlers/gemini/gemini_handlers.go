@@ -298,7 +298,7 @@ func (h *GeminiAPIHandler) handleStreamGenerateContent(c *gin.Context, modelName
 
 			// Write first chunk
 			if alt == "" {
-				_ = handlers.WriteSSEData(c.Writer, chunk)
+				_ = (&handlers.SSEFrameWriter{}).Write(c.Writer, chunk)
 			} else {
 				_, _ = c.Writer.Write(chunk)
 			}
@@ -368,11 +368,12 @@ func (h *GeminiAPIHandler) forwardGeminiStream(c *gin.Context, flusher http.Flus
 		keepAliveInterval = new(time.Duration(0))
 	}
 
+	var sseFrame handlers.SSEFrameWriter
 	h.ForwardStream(c, flusher, cancel, data, errs, handlers.StreamForwardOptions{
 		KeepAliveInterval: keepAliveInterval,
 		WriteChunk: func(chunk []byte) {
 			if alt == "" {
-				_ = handlers.WriteSSEData(c.Writer, chunk)
+				_ = sseFrame.Write(c.Writer, chunk)
 			} else {
 				_, _ = c.Writer.Write(chunk)
 			}

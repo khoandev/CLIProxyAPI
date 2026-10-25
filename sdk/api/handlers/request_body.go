@@ -37,6 +37,9 @@ func ReadRequestBody(c *gin.Context) ([]byte, error) {
 	if encoding == "" || strings.EqualFold(encoding, "identity") {
 		return raw, nil
 	}
+	if cached, ok := util.CachedDecodedRequestBody(c); ok {
+		return cached, nil
+	}
 
 	decoded, err := decodeRequestBody(raw, encoding, maxBytes)
 	if err != nil {
@@ -49,6 +52,7 @@ func ReadRequestBody(c *gin.Context) ([]byte, error) {
 		}
 		return nil, err
 	}
+	util.SetDecodedRequestBody(c, decoded)
 	return decoded, nil
 }
 

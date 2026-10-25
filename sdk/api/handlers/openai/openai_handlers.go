@@ -21,6 +21,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	responsesconverter "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/openai/openai/responses"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -150,16 +151,13 @@ func (h *OpenAIAPIHandler) ChatCompletions(c *gin.Context) {
 // shouldTreatAsResponsesFormat detects OpenAI Responses-style payloads that are
 // accidentally sent to the Chat Completions endpoint.
 func shouldTreatAsResponsesFormat(rawJSON []byte) bool {
-	if gjson.GetBytes(rawJSON, "messages").Exists() {
+	if util.GetGJSONBytesNoCopy(rawJSON, "messages").Exists() {
 		return false
 	}
-	if gjson.GetBytes(rawJSON, "input").Exists() {
+	if util.GetGJSONBytesNoCopy(rawJSON, "input").Exists() {
 		return true
 	}
-	if gjson.GetBytes(rawJSON, "instructions").Exists() {
-		return true
-	}
-	return false
+	return util.GetGJSONBytesNoCopy(rawJSON, "instructions").Exists()
 }
 
 // Completions handles the /v1/completions endpoint.
@@ -577,11 +575,11 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 			stopKeepAlive()
 			commitSSE()
 
-			initialHasFinishReason := chunkHasFinishReason(chunk)
-			_ = handlers.WriteSSEData(c.Writer, chunk)
+			initialTermErr, initialHasFinishReason := inspectChatStreamChunk(chunk)
+			_ = (&handlers.SSEFrameWriter{}).Write(c.Writer, chunk)
 			flusher.Flush()
-			if termErr := chunkTerminalError(chunk); termErr != nil {
-				cliCancel(termErr.Error)
+			if initialTermErr != nil {
+				cliCancel(initialTermErr.Error)
 				return
 			}
 
@@ -742,8 +740,8 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 			converted := convertChatCompletionsStreamChunkToCompletions(chunk)
 			var initialHasFinishReason bool
 			if converted != nil {
-				initialHasFinishReason = chunkHasFinishReason(converted)
-				_ = handlers.WriteSSEData(c.Writer, converted)
+				_, initialHasFinishReason = inspectChatStreamChunk(converted)
+				_ = (&handlers.SSEFrameWriter{}).Write(c.Writer, converted)
 				flusher.Flush()
 			}
 
@@ -785,52 +783,53 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 		}
 	}
 }
-func chunkTerminalError(chunk []byte) *interfaces.ErrorMessage {
-	chunk = bytes.TrimSpace(chunk)
-	if bytes.HasPrefix(chunk, []byte("data:")) {
-		chunk = bytes.TrimSpace(chunk[5:])
-	}
-	if gjson.GetBytes(chunk, "choices").Exists() || !gjson.GetBytes(chunk, "error").IsObject() {
-		return nil
-	}
-	msg := gjson.GetBytes(chunk, "error.message").String()
-	if msg == "" {
-		msg = string(chunk)
-	}
-	return &interfaces.ErrorMessage{
-		StatusCode: http.StatusBadRequest,
-		Error:      fmt.Errorf("%s", msg),
-	}
-}
 
-func chunkHasFinishReason(chunk []byte) bool {
+// inspectChatStreamChunk reports the terminal error carried by one chunk (nil
+// when absent) and whether the chunk closes the response with a finish_reason.
+// Both answers come from one inspection: a chunk that carries neither marker is
+// answered without parsing it.
+func inspectChatStreamChunk(chunk []byte) (*interfaces.ErrorMessage, bool) {
 	chunk = bytes.TrimSpace(chunk)
 	if bytes.HasPrefix(chunk, []byte("data:")) {
 		chunk = bytes.TrimSpace(chunk[5:])
 	}
-	if chunkTerminalError(chunk) != nil {
-		return true
+
+	if bytes.Contains(chunk, []byte(`"error"`)) &&
+		!gjson.GetBytes(chunk, "choices").Exists() &&
+		gjson.GetBytes(chunk, "error").IsObject() {
+		msg := gjson.GetBytes(chunk, "error.message").String()
+		if msg == "" {
+			msg = string(chunk)
+		}
+		return &interfaces.ErrorMessage{
+			StatusCode: http.StatusBadRequest,
+			Error:      fmt.Errorf("%s", msg),
+		}, true
 	}
-	for _, choice := range gjson.GetBytes(chunk, "choices").Array() {
-		if reason := choice.Get("finish_reason"); reason.Exists() && reason.Type != gjson.Null && reason.String() != "" {
-			return true
+
+	if bytes.Contains(chunk, []byte("finish_reason")) {
+		for _, choice := range gjson.GetBytes(chunk, "choices").Array() {
+			if reason := choice.Get("finish_reason"); reason.Exists() && reason.Type != gjson.Null && reason.String() != "" {
+				return nil, true
+			}
 		}
 	}
-	return false
+	return nil, false
 }
 
 func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, initialHasFinishReason bool) {
 	sawFinishReason := initialHasFinishReason
 	var terminalChunkErr *interfaces.ErrorMessage
+	var sseFrame handlers.SSEFrameWriter
 	h.ForwardStream(c, flusher, cancel, data, errs, handlers.StreamForwardOptions{
 		WriteChunk: func(chunk []byte) {
-			if termErr := chunkTerminalError(chunk); termErr != nil {
+			if termErr, hasFinishReason := inspectChatStreamChunk(chunk); termErr != nil {
 				terminalChunkErr = termErr
 				sawFinishReason = true
-			} else if !sawFinishReason && chunkHasFinishReason(chunk) {
+			} else if hasFinishReason {
 				sawFinishReason = true
 			}
-			_ = handlers.WriteSSEData(c.Writer, chunk)
+			_ = sseFrame.Write(c.Writer, chunk)
 		},
 		ChunkError: func() *interfaces.ErrorMessage {
 			return terminalChunkErr
@@ -848,7 +847,7 @@ func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flush
 				errText = errMsg.Error.Error()
 			}
 			body := handlers.BuildErrorResponseBody(status, errText)
-			_ = handlers.WriteSSEData(c.Writer, body)
+			_ = (&handlers.SSEFrameWriter{}).Write(c.Writer, body)
 		},
 		CloseError: func() *interfaces.ErrorMessage {
 			if sawFinishReason {

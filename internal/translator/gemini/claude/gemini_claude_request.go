@@ -114,7 +114,9 @@ func convertClaudeRequestToGemini(modelName string, inputRawJSON []byte, _ bool,
 			}
 			if contentsResult.IsArray() {
 				if originalRole == "user" {
-					contentsResult = translatorcommon.AlignClaudeToolResults(contentsResult, precedingToolUseIDs)
+					if aligned := translatorcommon.AlignClaudeToolResults(contentsResult, precedingToolUseIDs); aligned != nil {
+						contentsResult = util.ParseGJSONBytesNoCopy(aligned)
+					}
 				}
 				contentsResult.ForEach(func(_, contentResult gjson.Result) bool {
 					switch contentResult.Get("type").String() {

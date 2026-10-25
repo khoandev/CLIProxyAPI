@@ -411,7 +411,9 @@ func convertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 			}
 			if contentsResult.IsArray() {
 				if originalRole == "user" {
-					contentsResult = translatorcommon.AlignClaudeToolResults(contentsResult, precedingToolUseIDs)
+					if aligned := translatorcommon.AlignClaudeToolResults(contentsResult, precedingToolUseIDs); aligned != nil {
+						contentsResult = util.ParseGJSONBytesNoCopy(aligned)
+					}
 				}
 				contentResults := contentsResult.Array()
 				numContents := len(contentResults)

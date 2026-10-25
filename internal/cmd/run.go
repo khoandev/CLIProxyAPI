@@ -15,6 +15,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/memlimit"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -35,6 +36,8 @@ func StartServiceWithPluginHost(cfg *config.Config, configPath string, localPass
 	// Keep the resident set below the container memory ceiling so the kernel
 	// OOM killer does not terminate the proxy. GOMEMLIMIT takes precedence.
 	memlimit.Apply()
+	// Reuse upstream connections under load instead of re-dialing per request.
+	proxyutil.ExpandDefaultTransportIdlePool()
 
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
@@ -83,6 +86,8 @@ func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string,
 	// Keep the resident set below the container memory ceiling so the kernel
 	// OOM killer does not terminate the proxy. GOMEMLIMIT takes precedence.
 	memlimit.Apply()
+	// Reuse upstream connections under load instead of re-dialing per request.
+	proxyutil.ExpandDefaultTransportIdlePool()
 
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).

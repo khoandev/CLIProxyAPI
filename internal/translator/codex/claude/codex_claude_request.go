@@ -123,7 +123,9 @@ func convertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool, 
 
 			messageContentsResult := messageResult.Get("content")
 			if messageRole == "user" && len(pendingToolUseIDs) > 0 && messageContentsResult.IsArray() {
-				messageContentsResult = translatorcommon.AlignClaudeToolResults(messageContentsResult, pendingToolUseIDs)
+				if aligned := translatorcommon.AlignClaudeToolResults(messageContentsResult, pendingToolUseIDs); aligned != nil {
+					messageContentsResult = util.ParseGJSONBytesNoCopy(aligned)
+				}
 			}
 			pendingToolUseIDs = nil
 			contentItems := make([][]byte, 0, 4)

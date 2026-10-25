@@ -203,7 +203,7 @@ func RecordAPIResponseMetadata(ctx context.Context, cfg *config.Config, status i
 	if ginCtx == nil {
 		return
 	}
-	attempts, attempt := ensureAttempt(ginCtx)
+	_, attempt := ensureAttempt(ginCtx)
 	ensureResponseIntro(ginCtx, attempt)
 
 	if status > 0 && !attempt.statusWritten {
@@ -219,7 +219,6 @@ func RecordAPIResponseMetadata(ctx context.Context, cfg *config.Config, status i
 		writeAttemptResponse(ginCtx, attempt, []byte("\n"))
 	}
 
-	updateAggregatedResponseIfMemoryBacked(ginCtx, attempts)
 }
 
 // RecordAPIResponseError adds an error entry for the latest attempt when no HTTP response is available.
@@ -231,7 +230,7 @@ func RecordAPIResponseError(ctx context.Context, cfg *config.Config, err error) 
 	if ginCtx == nil {
 		return
 	}
-	attempts, attempt := ensureAttempt(ginCtx)
+	_, attempt := ensureAttempt(ginCtx)
 	ensureResponseIntro(ginCtx, attempt)
 
 	if attempt.bodyStarted && !attempt.bodyHasContent {
@@ -244,7 +243,6 @@ func RecordAPIResponseError(ctx context.Context, cfg *config.Config, err error) 
 	writeAttemptResponse(ginCtx, attempt, []byte(fmt.Sprintf("Error: %s\n", err.Error())))
 	attempt.errorWritten = true
 
-	updateAggregatedResponseIfMemoryBacked(ginCtx, attempts)
 }
 
 // AppendAPIResponseChunk appends an upstream response chunk to Gin context for request logging.
@@ -260,7 +258,7 @@ func AppendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byt
 	if ginCtx == nil {
 		return
 	}
-	attempts, attempt := ensureAttempt(ginCtx)
+	_, attempt := ensureAttempt(ginCtx)
 	ensureResponseIntro(ginCtx, attempt)
 
 	if !attempt.headersWritten {
@@ -288,7 +286,6 @@ func AppendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byt
 	attempt.bodyHasContent = true
 	attempt.prevWasSSEEvent = currentChunkIsSSEEvent
 
-	updateAggregatedResponseIfMemoryBacked(ginCtx, attempts)
 }
 
 // RecordAPIWebsocketRequest stores an upstream websocket request event in Gin context.
@@ -541,17 +538,43 @@ func updateAggregatedRequest(ginCtx *gin.Context, attempts []*upstreamAttempt) {
 	ginCtx.Set(apiRequestKey, []byte(builder.String()))
 }
 
-func updateAggregatedResponseIfMemoryBacked(ginCtx *gin.Context, attempts []*upstreamAttempt) {
-	if apiResponseSourceOrNil(ginCtx) != nil {
+// AggregateAPIResponse publishes the captured API response attempts as the
+// in-memory API_RESPONSE. It runs once when the response completes: rebuilding
+// the aggregate for every streamed chunk cost O(n^2) CPU and kept a second copy
+// of the whole response resident.
+//
+// Publishing once has to reproduce what the per-chunk writes produced. The
+// handler appends its own payload to API_RESPONSE at the end of the request, so
+// that payload is kept after the aggregate unless the aggregate already ends
+// with it. A file-backed capture keeps writing to its file.
+func AggregateAPIResponse(ginCtx *gin.Context) {
+	if ginCtx == nil || apiResponseSourceOrNil(ginCtx) != nil {
 		return
 	}
-	updateAggregatedResponse(ginCtx, attempts)
+	aggregate := aggregateAPIResponse(getAttempts(ginCtx))
+	if len(aggregate) == 0 {
+		// Nothing was captured from the attempts; keep whatever the handler wrote.
+		return
+	}
+	existing, _ := ginCtx.Get(apiResponseKey)
+	existingBytes, _ := existing.([]byte)
+	switch {
+	case len(existingBytes) == 0:
+		ginCtx.Set(apiResponseKey, aggregate)
+	case bytes.Contains(aggregate, bytes.TrimSpace(existingBytes)):
+		// The handler payload is already part of the aggregate.
+		ginCtx.Set(apiResponseKey, aggregate)
+	default:
+		// The handler appended its own tail after the chunks it saw.
+		combined := make([]byte, 0, len(aggregate)+len(existingBytes)+1)
+		combined = append(combined, aggregate...)
+		combined = append(combined, existingBytes...)
+		ginCtx.Set(apiResponseKey, combined)
+	}
 }
 
-func updateAggregatedResponse(ginCtx *gin.Context, attempts []*upstreamAttempt) {
-	if ginCtx == nil {
-		return
-	}
+// aggregateAPIResponse joins the captured attempts into the API response text.
+func aggregateAPIResponse(attempts []*upstreamAttempt) []byte {
 	var builder strings.Builder
 	for _, attempt := range attempts {
 		if attempt == nil || attempt.response == nil {
@@ -566,7 +589,7 @@ func updateAggregatedResponse(ginCtx *gin.Context, attempts []*upstreamAttempt) 
 	if responseText := builder.String(); responseText != "" && !strings.HasSuffix(responseText, "\n") {
 		builder.WriteString("\n")
 	}
-	ginCtx.Set(apiResponseKey, []byte(builder.String()))
+	return []byte(builder.String())
 }
 
 func apiRequestSource(ginCtx *gin.Context) (*logging.FileBodySource, bool) {

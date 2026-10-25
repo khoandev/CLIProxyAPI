@@ -451,7 +451,10 @@ func TestDecodeCapturedRequestBodyForLogWithLimitTruncatesZstdExpansion(t *testi
 		t.Fatalf("zstd close: %v", errClose)
 	}
 
-	decoded := decodeCapturedRequestBodyForLogWithLimit(compressed.Bytes(), "zstd", 64)
+	decoded, fullyDecoded := decodeCapturedRequestBodyForLogWithLimit(compressed.Bytes(), "zstd", 64)
+	if fullyDecoded {
+		t.Fatalf("truncated decode must not be reported as fully decoded")
+	}
 	if len(decoded) > 128 {
 		t.Fatalf("limited decoded body length = %d, want bounded output", len(decoded))
 	}
@@ -768,4 +771,142 @@ func TestRequestLoggingMiddleware_StreamingPreservesFullUUIDForLogger(t *testing
 	if parsed.Version() != 7 {
 		t.Fatalf("streaming request ID version = %d, want 7", parsed.Version())
 	}
+}
+
+// TestRequestLoggingMiddlewareKeepsEveryStreamChunkInAPIResponse proves the
+// aggregate published once at the end of the response still carries every chunk
+// the handler captured, even when the handler writes its own API_RESPONSE tail.
+func TestRequestLoggingMiddlewareKeepsEveryStreamChunkInAPIResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logsDir := t.TempDir()
+	logger := logging.NewFileRequestLogger(true, logsDir, "", 10)
+	cfg := &config.Config{SDKConfig: config.SDKConfig{RequestLog: true}}
+
+	chunks := []string{
+		"data: {\"choices\":[{\"delta\":{\"content\":\"one\"}}]}\n\n",
+		"data: {\"choices\":[{\"delta\":{\"content\":\"two\"}}]}\n\n",
+		"data: {\"choices\":[{\"delta\":{\"content\":\"three\"}}]}\n\n",
+	}
+
+	router := gin.New()
+	router.Use(RequestLoggingMiddleware(logger))
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.Header("Content-Type", "text/event-stream")
+		executorCtx := context.WithValue(context.Background(), "gin", c)
+		helps.RecordAPIRequest(executorCtx, cfg, helps.UpstreamRequestLog{
+			URL:    "https://api.example.com/v1/chat/completions",
+			Method: http.MethodPost,
+			Body:   []byte(`{"model":"m","stream":true}`),
+		})
+		for _, chunk := range chunks {
+			helps.AppendAPIResponseChunk(executorCtx, cfg, []byte(chunk))
+			_, _ = c.Writer.Write([]byte(chunk))
+			if flusher, ok := c.Writer.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		// The request-log cancel func captures the handler's own tail here.
+		c.Set("API_RESPONSE", []byte(chunks[len(chunks)-1]))
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m","stream":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	entries, errReadDir := os.ReadDir(logsDir)
+	if errReadDir != nil {
+		t.Fatalf("read logs dir: %v", errReadDir)
+	}
+	var logPath string
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".log") {
+			logPath = logsDir + string(os.PathSeparator) + entry.Name()
+			break
+		}
+	}
+	if logPath == "" {
+		t.Fatal("streaming request log was not created")
+	}
+	content, errReadLog := os.ReadFile(logPath)
+	if errReadLog != nil {
+		t.Fatalf("read log file: %v", errReadLog)
+	}
+	for _, chunk := range chunks {
+		if !bytes.Contains(content, []byte(chunk)) {
+			t.Fatalf("streaming log is missing chunk %q:\n%s", chunk, string(content))
+		}
+	}
+}
+
+// TestRequestLoggingMiddlewareCapsCapturedResponseBody proves a huge
+// non-streaming body is truncated in the raw response section of the log, while
+// an API_RESPONSE the handler captured keeps the full payload.
+func TestRequestLoggingMiddlewareCapsCapturedResponseBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fullBody := bytes.Repeat([]byte("0123456789abcdef"), 4<<20/16) // 4 MiB
+
+	runRequest := func(t *testing.T, handlerAuthoredAPIResponse bool) (string, *[]byte) {
+		t.Helper()
+		logsDir := t.TempDir()
+		logger := logging.NewFileRequestLogger(true, logsDir, "", 10)
+		var captured []byte
+
+		router := gin.New()
+		router.Use(RequestLoggingMiddleware(logger))
+		router.POST("/v1/chat/completions", func(c *gin.Context) {
+			c.Header("Content-Type", "application/json")
+			_, _ = c.Writer.Write(fullBody)
+			if handlerAuthoredAPIResponse {
+				c.Set("API_RESPONSE", fullBody)
+				captured = fullBody
+			}
+		})
+
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Body.Len() != len(fullBody) {
+			t.Fatalf("client body = %d bytes, want the full %d", response.Body.Len(), len(fullBody))
+		}
+
+		entries, errReadDir := os.ReadDir(logsDir)
+		if errReadDir != nil {
+			t.Fatalf("read logs dir: %v", errReadDir)
+		}
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".log") {
+				content, errReadLog := os.ReadFile(logsDir + string(os.PathSeparator) + entry.Name())
+				if errReadLog != nil {
+					t.Fatalf("read log file: %v", errReadLog)
+				}
+				return string(content), &captured
+			}
+		}
+		t.Fatal("request log was not created")
+		return "", nil
+	}
+
+	t.Run("raw response body is capped", func(t *testing.T) {
+		content, _ := runRequest(t, false)
+		if !strings.Contains(content, "[TRUNCATED]") {
+			t.Fatalf("log must mark the truncated body")
+		}
+		if len(content) > maxCapturedResponseBodyBytes+64<<10 {
+			t.Fatalf("log size = %d bytes, want the 4 MiB body capped near %d", len(content), maxCapturedResponseBodyBytes)
+		}
+	})
+
+	t.Run("handler API_RESPONSE keeps the full body", func(t *testing.T) {
+		content, captured := runRequest(t, true)
+		if len(*captured) != len(fullBody) {
+			t.Fatalf("captured API_RESPONSE = %d bytes, want %d", len(*captured), len(fullBody))
+		}
+		if !strings.Contains(content, string(fullBody)) {
+			t.Fatalf("log must contain the full handler-authored API_RESPONSE")
+		}
+	})
 }

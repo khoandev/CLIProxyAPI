@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	kimiauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/kimi"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -626,6 +627,8 @@ func TestKimiExecutorClaudeStreamForwardsAnthropicBetaAndLogsUpstream(t *testing
 		t.Fatalf("API_REQUEST = %q, want captured upstream request", apiRequestText)
 	}
 
+	// The response writer publishes the aggregate when the response completes.
+	helps.AggregateAPIResponse(ginCtx)
 	rawAPIResponse, existsResponse := ginCtx.Get("API_RESPONSE")
 	apiResponse, okResponse := rawAPIResponse.([]byte)
 	if !existsResponse || !okResponse {

@@ -351,27 +351,36 @@ func (h *ClaudeCodeAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON [
 }
 
 type claudeSSEStreamState struct {
-	sawErrorEvent      bool
-	sawMessageStop     bool
-	sawBareMessageJSON bool
-	trailingNewlines   int
-	currentEvent       string
-	eventData          [][]byte
-	lineBuf            bytes.Buffer
+	sawErrorEvent       bool
+	sawMessageStop      bool
+	sawBareMessageJSON  bool
+	trailingNewlines    int
+	currentEventIsError bool
+	eventBuf            bytes.Buffer
+	lineBuf             bytes.Buffer
 }
 
 func (s *claudeSSEStreamState) ObserveChunk(chunk []byte) {
 	if len(chunk) == 0 {
 		return
 	}
-	s.trailingNewlines = advanceClaudeSSENewlineCount(s.trailingNewlines, chunk)
-	for _, b := range chunk {
-		if b == '\n' {
+	s.trailingNewlines = trailingClaudeSSENewlines(s.trailingNewlines, chunk)
+	for len(chunk) > 0 {
+		end := bytes.IndexByte(chunk, '\n')
+		if end < 0 {
+			// No line terminator yet: keep the partial line for the next chunk.
+			s.lineBuf.Write(chunk)
+			return
+		}
+		if s.lineBuf.Len() == 0 {
+			// Whole line inside this chunk: hand out the slice instead of copying it.
+			s.observeLine(chunk[:end])
+		} else {
+			s.lineBuf.Write(chunk[:end])
 			s.observeLine(s.lineBuf.Bytes())
 			s.lineBuf.Reset()
-			continue
 		}
-		s.lineBuf.WriteByte(b)
+		chunk = chunk[end+1:]
 	}
 }
 
@@ -384,13 +393,15 @@ func (s *claudeSSEStreamState) FlushPendingLine() {
 }
 
 func (s *claudeSSEStreamState) flushEventData() {
-	if len(s.eventData) > 0 {
-		joined := bytes.TrimSpace(bytes.Join(s.eventData, []byte("\n")))
-		s.eventData = s.eventData[:0]
-		if len(joined) > 0 && gjson.ValidBytes(joined) {
-			s.observeJSONPayload(joined, true)
-		}
+	if s.eventBuf.Len() == 0 {
+		return
 	}
+	joined := bytes.TrimSpace(s.eventBuf.Bytes())
+	if len(joined) > 0 && gjson.ValidBytes(joined) {
+		// observeJSONPayload only reads, so the buffer is reset afterwards.
+		s.observeJSONPayload(joined, true)
+	}
+	s.eventBuf.Reset()
 }
 
 func (s *claudeSSEStreamState) ensureSSEEventBoundary(w io.Writer) {
@@ -410,17 +421,20 @@ func (s *claudeSSEStreamState) observeLine(line []byte) {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 {
 		s.flushEventData()
-		s.currentEvent = ""
+		s.currentEventIsError = false
 		return
 	}
 	if bytes.HasPrefix(trimmed, []byte("event:")) {
-		s.currentEvent = strings.TrimSpace(string(trimmed[len("event:"):]))
+		s.currentEventIsError = bytes.Equal(bytes.TrimSpace(trimmed[len("event:"):]), []byte("error"))
 		return
 	}
 	if bytes.HasPrefix(trimmed, []byte("data:")) {
 		payload := bytes.TrimSpace(trimmed[len("data:"):])
 		if len(payload) > 0 {
-			s.eventData = append(s.eventData, append([]byte(nil), payload...))
+			if s.eventBuf.Len() > 0 {
+				s.eventBuf.WriteByte('\n')
+			}
+			s.eventBuf.Write(payload)
 		}
 		return
 	}
@@ -431,7 +445,14 @@ func (s *claudeSSEStreamState) observeLine(line []byte) {
 }
 
 func (s *claudeSSEStreamState) observeJSONPayload(payload []byte, hasDataPrefix bool) {
-	root := gjson.ParseBytes(payload)
+	// Only these three markers can reach a state change, so every other payload
+	// (the content deltas that dominate a stream) skips parsing entirely.
+	if !bytes.Contains(payload, []byte("message_stop")) &&
+		!bytes.Contains(payload, []byte(`"error"`)) &&
+		!bytes.Contains(payload, []byte("stop_reason")) {
+		return
+	}
+	root := util.ParseGJSONBytesNoCopy(payload)
 	switch root.Get("type").String() {
 	case "message_stop":
 		s.sawMessageStop = true
@@ -443,27 +464,29 @@ func (s *claudeSSEStreamState) observeJSONPayload(payload []byte, hasDataPrefix 
 			s.sawBareMessageJSON = true
 		}
 	default:
-		if hasDataPrefix && s.currentEvent == "error" && root.Get("error").Exists() {
+		if hasDataPrefix && s.currentEventIsError && root.Get("error").Exists() {
 			s.sawErrorEvent = true
 		}
 	}
 }
 
-func advanceClaudeSSENewlineCount(prev int, chunk []byte) int {
-	count := prev
-	for _, b := range chunk {
-		switch b {
+// trailingClaudeSSENewlines reports how many trailing newlines the stream ends
+// with after chunk, capped at 2. Only the tail of chunk matters, so it scans
+// backwards and stops at the first byte that is not a newline.
+func trailingClaudeSSENewlines(prev int, chunk []byte) int {
+	count := 0
+	for i := len(chunk) - 1; i >= 0; i-- {
+		switch chunk[i] {
 		case '\r':
 			continue
 		case '\n':
-			if count < 2 {
-				count++
-			}
+			count++
 		default:
-			count = 0
+			return min(2, count)
 		}
 	}
-	return count
+	// The whole chunk was newlines, so it extends the previous run.
+	return min(2, prev+count)
 }
 
 func (h *ClaudeCodeAPIHandler) forwardClaudeStream(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, initialErrorWritten ...bool) {
