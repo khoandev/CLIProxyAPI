@@ -61,11 +61,12 @@ type ResponseWriterWrapper struct {
 // Returns:
 //   - A pointer to a new ResponseWriterWrapper.
 func NewResponseWriterWrapper(w gin.ResponseWriter, logger logging.RequestLogger, requestInfo *RequestInfo) *ResponseWriterWrapper {
+	// The header snapshot is allocated on first use: most requests never need
+	// it because request logging is off.
 	return &ResponseWriterWrapper{
 		ResponseWriter: w,
 		logger:         logger,
 		requestInfo:    requestInfo,
-		headers:        make(map[string][]string),
 	}
 }
 
@@ -190,8 +191,22 @@ func (w *ResponseWriterWrapper) ensureHeadersCaptured() {
 	if w.headersCaptured {
 		return
 	}
-	w.captureCurrentHeaders()
 	w.headersCaptured = true
+	// The snapshot only feeds request-log assembly, so skip it when nothing can
+	// consume it. Copying the whole header map on the first chunk of every
+	// response is measurable on a streaming proxy.
+	if !w.capturesHeaders() {
+		return
+	}
+	w.captureCurrentHeaders()
+}
+
+// capturesHeaders reports whether any log path can consume the header snapshot.
+func (w *ResponseWriterWrapper) capturesHeaders() bool {
+	if w.logOnErrorOnly {
+		return true
+	}
+	return w.logger != nil && w.logger.IsEnabled()
 }
 
 // captureCurrentHeaders reads all headers from the underlying ResponseWriter and stores them

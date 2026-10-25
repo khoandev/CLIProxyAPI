@@ -98,7 +98,7 @@ func ConvertCodexResponseToClaude(_ context.Context, _ string, originalRequestRa
 	rawJSON = bytes.TrimSpace(rawJSON[5:])
 
 	output := make([]byte, 0, 512)
-	rootResult := gjson.ParseBytes(rawJSON)
+	rootResult := util.ParseGJSONBytesNoCopy(rawJSON)
 	params := (*param).(*ConvertCodexResponseToClaudeParams)
 
 	typeResult := rootResult.Get("type")
@@ -417,7 +417,7 @@ func codexStreamErrorToClaudeError(rootResult gjson.Result) []byte {
 func ConvertCodexResponseToClaudeNonStream(_ context.Context, _ string, originalRequestRawJSON, _ []byte, rawJSON []byte, _ *any) []byte {
 	revNames := buildReverseMapFromClaudeOriginalShortToOriginal(originalRequestRawJSON)
 
-	rootResult := gjson.ParseBytes(rawJSON)
+	rootResult := util.ParseGJSONBytesNoCopy(rawJSON)
 	typeStr := rootResult.Get("type").String()
 	if typeStr != "response.completed" && typeStr != "response.incomplete" {
 		return []byte{}

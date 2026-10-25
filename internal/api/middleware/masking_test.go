@@ -513,3 +513,32 @@ func TestMaskingChunkBoundaryNotCached(t *testing.T) {
 		t.Errorf("stream body = %q, want %q", got, want)
 	}
 }
+
+// TestMaskNeedleVariantsCoverEveryRule pins the response prefilter invariant:
+// every rule source contains one of its family's cased needle variants, so the
+// variant scan never misses a byte sequence a rule would rewrite.
+func TestMaskNeedleVariantsCoverEveryRule(t *testing.T) {
+	sets := map[string]maskRuleSet{
+		"brandOnly":        brandOnlySet,
+		"brandClaude":      brandClaudeSet,
+		"brandOpenAI":      brandOpenAISet,
+		"brandAntigravity": brandAntigravitySet,
+	}
+	for name, set := range sets {
+		if len(set.variants) == 0 {
+			t.Fatalf("%s: no needle variants", name)
+		}
+		for _, rule := range set.rules {
+			covered := false
+			for _, variant := range set.variants {
+				if strings.Contains(rule.from, variant) {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				t.Errorf("%s: rule %q matches no needle variant, so the prefilter would skip it", name, rule.from)
+			}
+		}
+	}
+}

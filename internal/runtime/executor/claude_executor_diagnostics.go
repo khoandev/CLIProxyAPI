@@ -6,6 +6,7 @@ import (
 
 	claudeauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
@@ -93,7 +94,7 @@ func claudeMessageIDFromResponse(data []byte) string {
 }
 
 func observeClaudeStreamJSONPayload(payload []byte, hasDataPrefix bool, messageID *string, completed *bool) {
-	root := gjson.ParseBytes(payload)
+	root := util.ParseGJSONBytesNoCopy(payload)
 	switch root.Get("type").String() {
 	case "message_start":
 		if id := strings.TrimSpace(root.Get("message.id").String()); id != "" {
@@ -135,7 +136,7 @@ func observeClaudeSSEEvent(rawEvent []byte, messageID *string, completed *bool, 
 		return
 	}
 	observeClaudeStreamJSONPayload(joined, true, messageID, completed)
-	if streamErr != nil && *streamErr == nil && gjson.ParseBytes(joined).Get("type").String() == "error" {
+	if streamErr != nil && *streamErr == nil && util.ParseGJSONBytesNoCopy(joined).Get("type").String() == "error" {
 		*streamErr = statusErr{code: 502, msg: string(joined)}
 	}
 }

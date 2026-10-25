@@ -51,7 +51,7 @@ func (p *bodyReadingAccessProvider) Authenticate(_ context.Context, r *http.Requ
 	return nil, sdkaccess.NewNotHandledError()
 }
 
-func parseTestServerConfigYAML(t *testing.T, raw string) *proxyconfig.Config {
+func parseTestServerConfigYAML(t testing.TB, raw string) *proxyconfig.Config {
 	t.Helper()
 	cfg, errParse := proxyconfig.ParseConfigBytes([]byte(raw))
 	if errParse != nil {

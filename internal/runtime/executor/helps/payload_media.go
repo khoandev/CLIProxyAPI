@@ -11,6 +11,7 @@ import (
 	"net/textproto"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/tidwall/gjson"
 )
@@ -36,7 +37,7 @@ func ApplyMediaPayloadConfig(cfg *config.Config, executor, model, protocol strin
 	}
 	var buffer bytes.Buffer
 	writer := multipart.NewWriter(&buffer)
-	for key, value := range gjson.ParseBytes(out).Map() {
+	for key, value := range util.ParseGJSONBytesNoCopy(out).Map() {
 		values := []gjson.Result{value}
 		if value.IsArray() {
 			values = value.Array()

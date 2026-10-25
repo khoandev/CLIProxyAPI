@@ -1,77 +1,49 @@
 package middleware
 
-// foldLowerASCII lower-cases an ASCII letter byte, leaving everything else alone.
-func foldLowerASCII(c byte) byte {
-	if c >= 'A' && c <= 'Z' {
-		c |= 0x20
-	}
-	return c
-}
+import (
+	"bytes"
+	"strings"
+)
 
-// containsFoldASCII reports whether b contains the lowercase ASCII needle,
-// comparing ASCII letters case-insensitively without allocating.
-func containsFoldASCII(b []byte, needle string) bool {
-	n := len(needle)
-	if n == 0 {
-		return true
-	}
-	if n > len(b) {
-		return false
-	}
-	first := needle[0]
-	last := len(b) - n
-	for i := 0; i <= last; i++ {
-		if foldLowerASCII(b[i]) != first {
+// needleVariants returns the cased forms a rule family covers for each
+// lowercase root needle: lowercase, title case and uppercase.
+//
+// Every replacement rule spells its source in exactly one of those three forms,
+// so scanning for the variants finds every byte sequence a rule can rewrite.
+// Mixed cases such as "kIrA" are not rewritten by any rule, so not detecting
+// them changes no output byte. TestMaskNeedleVariantsCoverEveryRule pins the
+// invariant that keeps this prefilter exact.
+func needleVariants(needles []string) []string {
+	variants := make([]string, 0, len(needles)*3)
+	for _, needle := range needles {
+		if needle == "" {
 			continue
 		}
-		if foldEqualASCII(b[i:i+n], needle) {
+		variants = append(variants, needle, titleFirst(needle), strings.ToUpper(needle))
+	}
+	return variants
+}
+
+// containsNeedleBytes reports whether b carries any needle variant of the set.
+//
+// bytes.Contains is used instead of a byte-at-a-time case-folded loop: it scans
+// with SIMD, and masking runs on every streamed response chunk.
+func (s maskRuleSet) containsNeedleBytes(b []byte) bool {
+	for _, variant := range s.variants {
+		if bytes.Contains(b, []byte(variant)) {
 			return true
 		}
 	}
 	return false
 }
 
-// containsFoldString reports whether s contains the lowercase ASCII needle,
-// comparing ASCII letters case-insensitively without allocating.
-func containsFoldString(s, needle string) bool {
-	n := len(needle)
-	if n == 0 {
-		return true
-	}
-	if n > len(s) {
-		return false
-	}
-	first := needle[0]
-	last := len(s) - n
-	for i := 0; i <= last; i++ {
-		if foldLowerASCII(s[i]) != first {
-			continue
-		}
-		if foldEqualString(s[i:i+n], needle) {
+// containsNeedleString reports whether str carries any needle variant of the
+// set.
+func (s maskRuleSet) containsNeedleString(str string) bool {
+	for _, variant := range s.variants {
+		if strings.Contains(str, variant) {
 			return true
 		}
 	}
 	return false
-}
-
-// foldEqualASCII reports whether b equals the lowercase ASCII needle, ignoring
-// ASCII letter case. len(b) must equal len(needle).
-func foldEqualASCII(b []byte, needle string) bool {
-	for i := range b {
-		if foldLowerASCII(b[i]) != needle[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// foldEqualString reports whether s equals the lowercase ASCII needle, ignoring
-// ASCII letter case. len(s) must equal len(needle).
-func foldEqualString(s, needle string) bool {
-	for i := range s {
-		if foldLowerASCII(s[i]) != needle[i] {
-			return false
-		}
-	}
-	return true
 }

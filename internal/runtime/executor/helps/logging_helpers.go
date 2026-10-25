@@ -146,7 +146,13 @@ func deferAPIRequest(ginCtx *gin.Context, info UpstreamRequestLog) {
 	if captureLength > remaining {
 		captureLength = remaining
 	}
-	capturedInfo.Body = bytes.Clone(info.Body[:captureLength])
+	// The deferred log keeps a subslice instead of a copy: callers pass the
+	// final outbound payload, and in-place mutation of a payload buffer is banned
+	// repo-wide (TestNoInPlaceSJSONWrites / TestInPlaceByteWritesAreReviewed), so
+	// the bytes cannot change between this call and log assembly. Copying here
+	// cost one full-body allocation per upstream attempt on the default
+	// request-log:false path.
+	capturedInfo.Body = info.Body[:captureLength]
 	bodyEmpty := len(info.Body) == 0
 	bodyTruncated := captureLength < len(info.Body)
 	ginCtx.Set(deferredAPIRequestBytesKey, bytesUsed+captureLength)

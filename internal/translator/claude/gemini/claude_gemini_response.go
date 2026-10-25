@@ -13,6 +13,7 @@ import (
 
 	sigcompat "github.com/router-for-me/CLIProxyAPI/v8/internal/signature"
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -68,7 +69,7 @@ func ConvertClaudeResponseToGemini(_ context.Context, modelName string, original
 	}
 	rawJSON = bytes.TrimSpace(rawJSON[5:])
 
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 	eventType := root.Get("type").String()
 
 	// Base Gemini response template with default values
@@ -357,7 +358,7 @@ func ConvertClaudeResponseToGeminiNonStream(_ context.Context, modelName string,
 			continue
 		}
 
-		root := gjson.ParseBytes(eventData)
+		root := util.ParseGJSONBytesNoCopy(eventData)
 		eventType := root.Get("type").String()
 
 		switch eventType {
@@ -591,7 +592,7 @@ func consolidateParts(parts [][]byte) [][]byte {
 	}
 
 	for _, partJSON := range parts {
-		part := gjson.ParseBytes(partJSON)
+		part := util.ParseGJSONBytesNoCopy(partJSON)
 		if !part.Exists() || !part.IsObject() {
 			// Flush any pending parts and add this non-text part
 			flushText()

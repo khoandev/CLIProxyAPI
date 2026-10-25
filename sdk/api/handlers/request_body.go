@@ -73,6 +73,11 @@ func decodeRequestBody(raw []byte, encoding string, maxBytes int64) ([]byte, err
 	return body, nil
 }
 
+// maxDecodedRequestBodyBytes bounds the decompressed size of a zstd request body
+// when no configured limit applies. Without it a small compressed body could
+// expand without bound and exhaust memory on a weak host.
+const maxDecodedRequestBodyBytes int64 = 256 << 20 // 256 MiB
+
 func decodeZstdRequestBody(raw []byte, maxBytes int64) ([]byte, error) {
 	decoder, err := zstd.NewReader(bytes.NewReader(raw))
 	if err != nil {
@@ -80,16 +85,16 @@ func decodeZstdRequestBody(raw []byte, maxBytes int64) ([]byte, error) {
 	}
 	defer decoder.Close()
 
-	var reader io.Reader = decoder
-	if maxBytes > 0 && maxBytes < math.MaxInt64 {
-		reader = io.LimitReader(decoder, maxBytes+1)
+	limit := maxBytes
+	if limit <= 0 || limit >= math.MaxInt64 {
+		limit = maxDecodedRequestBodyBytes
 	}
-	decoded, err := io.ReadAll(reader)
+	decoded, err := io.ReadAll(io.LimitReader(decoder, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode zstd request body: %w", err)
 	}
-	if maxBytes > 0 && int64(len(decoded)) > maxBytes {
-		return nil, &http.MaxBytesError{Limit: maxBytes}
+	if int64(len(decoded)) > limit {
+		return nil, &http.MaxBytesError{Limit: limit}
 	}
 	return decoded, nil
 }

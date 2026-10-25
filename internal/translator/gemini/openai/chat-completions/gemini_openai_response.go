@@ -337,11 +337,16 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 	// Initialize template with an empty choices array to support multiple candidates.
 	template := []byte(`{"id":"","object":"chat.completion","created":123456,"model":"model","choices":[]}`)
 
-	if modelVersionResult := gjson.GetBytes(rawJSON, "modelVersion"); modelVersionResult.Exists() {
+	// Index the response members once: an absent-path lookup scans the whole
+	// document, and this function probes five of them on a payload that can be
+	// many megabytes.
+	response := util.NewJSONIndex(rawJSON)
+
+	if modelVersionResult := response.Get("modelVersion"); modelVersionResult.Exists() {
 		template, _ = sjson.SetBytes(template, "model", modelVersionResult.String())
 	}
 
-	if createTimeResult := gjson.GetBytes(rawJSON, "createTime"); createTimeResult.Exists() {
+	if createTimeResult := response.Get("createTime"); createTimeResult.Exists() {
 		t, err := time.Parse(time.RFC3339Nano, createTimeResult.String())
 		if err == nil {
 			unixTimestamp = t.Unix()
@@ -351,11 +356,11 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 		template, _ = sjson.SetBytes(template, "created", unixTimestamp)
 	}
 
-	if responseIDResult := gjson.GetBytes(rawJSON, "responseId"); responseIDResult.Exists() {
+	if responseIDResult := response.Get("responseId"); responseIDResult.Exists() {
 		template, _ = sjson.SetBytes(template, "id", responseIDResult.String())
 	}
 
-	if usageResult := gjson.GetBytes(rawJSON, "usageMetadata"); usageResult.Exists() {
+	if usageResult := response.Get("usageMetadata"); usageResult.Exists() {
 		template, _ = sjson.SetBytes(template, "usage.completion_tokens", usageResult.Get("candidatesTokenCount").Int()+usageResult.Get("thoughtsTokenCount").Int())
 		if totalTokenCountResult := usageResult.Get("totalTokenCount"); totalTokenCountResult.Exists() {
 			template, _ = sjson.SetBytes(template, "usage.total_tokens", totalTokenCountResult.Int())
@@ -378,7 +383,7 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 	}
 
 	// Process the main content part of the response for all candidates.
-	candidates := gjson.GetBytes(rawJSON, "candidates")
+	candidates := response.Get("candidates")
 	if candidates.IsArray() {
 		var choicesList [][]byte
 		candidates.ForEach(func(_, candidate gjson.Result) bool {
@@ -404,8 +409,10 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 				partsResults := partsResult.Array()
 				var toolCalls [][]byte
 				var images [][]byte
-				var textContent strings.Builder
-				var reasoningContent strings.Builder
+				// The text and reasoning parts are accumulated as raw JSON string
+				// bytes, so a multi-megabyte payload is never unescaped and
+				// re-escaped; the first part is reused without copying.
+				var textRaw, reasoningRaw []byte
 				hasTextContent := false
 				hasReasoningContent := false
 
@@ -429,10 +436,10 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 						// Append text content, distinguishing between regular content and reasoning.
 						if partResult.Get("thought").Bool() {
 							hasReasoningContent = true
-							reasoningContent.WriteString(partTextResult.String())
+							reasoningRaw = translatorcommon.AppendRawJSONString(reasoningRaw, partTextResult)
 						} else {
 							hasTextContent = true
-							textContent.WriteString(partTextResult.String())
+							textRaw = translatorcommon.AppendRawJSONString(textRaw, partTextResult)
 						}
 					} else if functionCallResult.Exists() {
 						// Append function call content to the tool_calls array.
@@ -469,10 +476,10 @@ func ConvertGeminiResponseToOpenAINonStream(_ context.Context, _ string, origina
 				}
 
 				if hasTextContent {
-					choiceTemplate, _ = sjson.SetBytes(choiceTemplate, "message.content", textContent.String())
+					choiceTemplate, _ = sjson.SetRawBytes(choiceTemplate, "message.content", textRaw)
 				}
 				if hasReasoningContent {
-					choiceTemplate, _ = sjson.SetBytes(choiceTemplate, "message.reasoning_content", reasoningContent.String())
+					choiceTemplate, _ = sjson.SetRawBytes(choiceTemplate, "message.reasoning_content", reasoningRaw)
 				}
 				if len(toolCalls) > 0 {
 					choiceTemplate, _ = sjson.SetRawBytes(choiceTemplate, "message.tool_calls", translatorcommon.JoinRawArray(toolCalls))

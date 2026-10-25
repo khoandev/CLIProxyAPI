@@ -18,6 +18,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v8/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
@@ -361,11 +362,16 @@ func (r *UsageReporter) SetTranslatedReasoningEffort(payload []byte, format stri
 }
 
 func extractEffectiveServiceTier(payload []byte) string {
+	// The validity check stays: gjson parses the first value of a malformed
+	// payload leniently, so a truncated body could otherwise report a tier.
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return ""
 	}
+	// The three candidate paths share one index over the top-level members, so
+	// the two absent paths no longer cost a full-document scan each.
+	index := util.NewJSONIndex(payload)
 	for _, path := range []string{"service_tier", "request.service_tier", "interaction.service_tier"} {
-		if node := gjson.GetBytes(payload, path); node.Type == gjson.String {
+		if node := index.Get(path); node.Type == gjson.String {
 			if tier := strings.TrimSpace(node.String()); tier != "" {
 				return tier
 			}
@@ -901,6 +907,10 @@ type StreamUsageBuffer struct {
 var (
 	openAIStreamUsageMarker       = []byte(`"usage"`)
 	openAIStreamServiceTierMarker = []byte(`"service_tier"`)
+	// geminiStreamUsageMarker deliberately omits the closing quote: the Gemini
+	// family spells the member usageMetadata or usage_metadata, and the quoted
+	// OpenAI marker would never match either name.
+	geminiStreamUsageMarker = []byte(`"usage`)
 )
 
 // Observe records detail when ok is true, allowing the final stream usage to win.
@@ -1185,7 +1195,12 @@ func ParseClaudeUsage(data []byte) usage.Detail {
 
 func ParseClaudeStreamUsage(line []byte) (usage.Detail, bool) {
 	payload := jsonPayload(line)
-	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+	// A chunk without the usage marker cannot carry usage metadata, and the
+	// validation plus absent-path scans below each walk the whole payload.
+	if len(payload) == 0 || !bytes.Contains(payload, openAIStreamUsageMarker) {
+		return usage.Detail{}, false
+	}
+	if !gjson.ValidBytes(payload) {
 		return usage.Detail{}, false
 	}
 	usageNode := gjson.GetBytes(payload, "usage")
@@ -1399,7 +1414,12 @@ func ParseGeminiUsage(data []byte) usage.Detail {
 
 func ParseGeminiStreamUsage(line []byte) (usage.Detail, bool) {
 	payload := jsonPayload(line)
-	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+	// A chunk without the usage marker cannot carry usage metadata, and the
+	// validation plus absent-path scans below each walk the whole payload.
+	if len(payload) == 0 || !bytes.Contains(payload, geminiStreamUsageMarker) {
+		return usage.Detail{}, false
+	}
+	if !gjson.ValidBytes(payload) {
 		return usage.Detail{}, false
 	}
 	node := gjson.GetBytes(payload, "usageMetadata")
@@ -1466,7 +1486,12 @@ func ParseAntigravityUsage(data []byte) usage.Detail {
 
 func ParseAntigravityStreamUsage(line []byte) (usage.Detail, bool) {
 	payload := jsonPayload(line)
-	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+	// A chunk without the usage marker cannot carry usage metadata, and the
+	// validation plus absent-path scans below each walk the whole payload.
+	if len(payload) == 0 || !bytes.Contains(payload, geminiStreamUsageMarker) {
+		return usage.Detail{}, false
+	}
+	if !gjson.ValidBytes(payload) {
 		return usage.Detail{}, false
 	}
 	node := gjson.GetBytes(payload, "response.usageMetadata")

@@ -578,7 +578,7 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 			commitSSE()
 
 			initialHasFinishReason := chunkHasFinishReason(chunk)
-			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(chunk))
+			_ = handlers.WriteSSEData(c.Writer, chunk)
 			flusher.Flush()
 			if termErr := chunkTerminalError(chunk); termErr != nil {
 				cliCancel(termErr.Error)
@@ -743,7 +743,7 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 			var initialHasFinishReason bool
 			if converted != nil {
 				initialHasFinishReason = chunkHasFinishReason(converted)
-				_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(converted))
+				_ = handlers.WriteSSEData(c.Writer, converted)
 				flusher.Flush()
 			}
 
@@ -830,7 +830,7 @@ func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flush
 			} else if !sawFinishReason && chunkHasFinishReason(chunk) {
 				sawFinishReason = true
 			}
-			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(chunk))
+			_ = handlers.WriteSSEData(c.Writer, chunk)
 		},
 		ChunkError: func() *interfaces.ErrorMessage {
 			return terminalChunkErr
@@ -848,7 +848,7 @@ func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flush
 				errText = errMsg.Error.Error()
 			}
 			body := handlers.BuildErrorResponseBody(status, errText)
-			_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", string(body))
+			_ = handlers.WriteSSEData(c.Writer, body)
 		},
 		CloseError: func() *interfaces.ErrorMessage {
 			if sawFinishReason {

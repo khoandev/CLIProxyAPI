@@ -266,13 +266,13 @@ func isUpstreamGeminiRequest(rawJSON []byte) bool {
 
 func determineWebSearchStreamMode(modelName, requestModelName string, originalRequestRawJSON, requestRawJSON, reqJSON []byte) bool {
 	if len(originalRequestRawJSON) > 0 {
-		origRoot := unwrapRequestRoot(gjson.ParseBytes(originalRequestRawJSON))
+		origRoot := unwrapRequestRoot(util.ParseGJSONBytesNoCopy(originalRequestRawJSON))
 		if !AllowsResponsesWebSearchToolChoice(origRoot) {
 			return false
 		}
 	}
 	if len(requestRawJSON) > 0 {
-		reqRoot := unwrapRequestRoot(gjson.ParseBytes(requestRawJSON))
+		reqRoot := unwrapRequestRoot(util.ParseGJSONBytesNoCopy(requestRawJSON))
 		if reqRoot.Get("tool_choice").Exists() && !AllowsResponsesWebSearchToolChoice(reqRoot) {
 			return false
 		}
@@ -284,7 +284,7 @@ func determineWebSearchStreamMode(modelName, requestModelName string, originalRe
 		reqJSON = pickRequestJSON(originalRequestRawJSON, requestRawJSON)
 	}
 	if len(reqJSON) > 0 {
-		reqRoot := unwrapRequestRoot(gjson.ParseBytes(reqJSON))
+		reqRoot := unwrapRequestRoot(util.ParseGJSONBytesNoCopy(reqJSON))
 		return HasResponsesWebSearchTool(reqRoot) &&
 			AllowsResponsesWebSearchToolChoice(reqRoot) &&
 			(ModelSupportsWebSearch(modelName) || ModelSupportsWebSearch(requestModelName))
@@ -391,7 +391,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 		rawJSON = []byte(`{}`)
 	}
 
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 	if !root.Exists() {
 		return [][]byte{}
 	}
@@ -416,7 +416,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 			st.WebSearchQuery = st.WebSearchQueries[0]
 		}
 		if st.WebSearchQuery == "" && len(reqJSON) > 0 {
-			reqRoot := unwrapRequestRoot(gjson.ParseBytes(reqJSON))
+			reqRoot := unwrapRequestRoot(util.ParseGJSONBytesNoCopy(reqJSON))
 			st.WebSearchQuery = ExtractResponsesWebSearchQuery(reqRoot)
 		}
 
@@ -530,7 +530,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 			st.WebSearchQuery = st.WebSearchQueries[0]
 		}
 		if st.WebSearchQuery == "" && len(reqJSON) > 0 {
-			reqRoot := unwrapRequestRoot(gjson.ParseBytes(reqJSON))
+			reqRoot := unwrapRequestRoot(util.ParseGJSONBytesNoCopy(reqJSON))
 			st.WebSearchQuery = ExtractResponsesWebSearchQuery(reqRoot)
 		}
 
@@ -1447,10 +1447,10 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 		completed, _ = sjson.SetBytes(completed, "response.created_at", st.CreatedAt)
 
 		if len(reqJSON) > 0 {
-			req := unwrapRequestRoot(gjson.ParseBytes(reqJSON))
-			if v := req.Get("instructions"); v.Exists() {
-				completed, _ = sjson.SetBytes(completed, "response.instructions", v.String())
-			}
+			// The request echo copies request fields into the terminal event. The
+			// request can be megabytes, so parse it without copying and splice the
+			// already-quoted values instead of re-escaping them.
+			req := unwrapRequestRoot(util.ParseGJSONBytesNoCopy(reqJSON))
 			if v := req.Get("max_output_tokens"); v.Exists() {
 				completed, _ = sjson.SetBytes(completed, "response.max_output_tokens", v.Int())
 			}
@@ -1507,6 +1507,11 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 			}
 			if v := req.Get("metadata"); v.Exists() {
 				completed, _ = sjson.SetBytes(completed, "response.metadata", v.Value())
+			}
+			// Instructions can be megabytes and every later sjson write copies the
+			// whole document, so it is spliced last.
+			if v := req.Get("instructions"); v.Exists() {
+				completed, _ = sjson.SetRawBytes(completed, "response.instructions", util.GJSONRawBytesNoCopy(v))
 			}
 		}
 
@@ -1595,7 +1600,7 @@ func ConvertGeminiResponseToOpenAIResponses(_ context.Context, modelName string,
 
 // ConvertGeminiResponseToOpenAIResponsesNonStream aggregates Gemini response JSON into a single OpenAI Responses JSON object.
 func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []byte {
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 	root = unwrapGeminiResponseRoot(root)
 	reqJSON := pickRequestJSON(originalRequestRawJSON, requestRawJSON)
 	sanitizedNameMap := util.SanitizedToolNameMap(originalRequestRawJSON)
@@ -1631,9 +1636,11 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 
 	// Echo request fields when present; fallback model from response modelVersion
 	if len(reqJSON) > 0 {
-		req := unwrapRequestRoot(gjson.ParseBytes(reqJSON))
+		req := unwrapRequestRoot(util.ParseGJSONBytesNoCopy(reqJSON))
 		if v := req.Get("instructions"); v.Exists() {
-			resp, _ = sjson.SetBytes(resp, "instructions", v.String())
+			// Instructions can be megabytes; splice the already-quoted string
+			// instead of unescaping and re-escaping it.
+			resp, _ = sjson.SetRawBytes(resp, "instructions", util.GJSONRawBytesNoCopy(v))
 		}
 		if v := req.Get("max_output_tokens"); v.Exists() {
 			resp, _ = sjson.SetBytes(resp, "max_output_tokens", v.Int())
@@ -2002,7 +2009,7 @@ func ConvertGeminiResponseToOpenAIResponsesNonStream(_ context.Context, _ string
 			query = queries[0]
 		}
 		if query == "" && len(reqJSON) > 0 {
-			query = ExtractResponsesWebSearchQuery(unwrapRequestRoot(gjson.ParseBytes(reqJSON)))
+			query = ExtractResponsesWebSearchQuery(unwrapRequestRoot(util.ParseGJSONBytesNoCopy(reqJSON)))
 		}
 		sources := ExtractGroundingSources(groundingMetadata)
 		wsID := fmt.Sprintf("ws_%s", strings.TrimPrefix(id, "resp_"))

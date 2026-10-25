@@ -102,6 +102,12 @@ func openAICompatModelPoolKey(auth *Auth, requestedModel string) string {
 	return strings.ToLower(strings.TrimSpace(auth.ID)) + "|" + openAICompatProviderKey(auth) + "|" + strings.ToLower(base)
 }
 
+// modelPoolOffsetsLimit bounds the round-robin offset table. Keys are derived
+// from auth ID, provider and model, so a long-lived proxy with many models would
+// otherwise grow the map without bound. Resetting keeps the rotation fair: the
+// offsets only decide where the next pick starts.
+const modelPoolOffsetsLimit = 4096
+
 func (m *Manager) nextModelPoolOffset(key string, size int) int {
 	if m == nil || size <= 1 {
 		return 0
@@ -113,6 +119,9 @@ func (m *Manager) nextModelPoolOffset(key string, size int) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.modelPoolOffsets == nil {
+		m.modelPoolOffsets = make(map[string]int)
+	}
+	if _, exists := m.modelPoolOffsets[key]; !exists && len(m.modelPoolOffsets) >= modelPoolOffsetsLimit {
 		m.modelPoolOffsets = make(map[string]int)
 	}
 	offset := m.modelPoolOffsets[key]

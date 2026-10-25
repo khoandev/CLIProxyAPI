@@ -601,6 +601,48 @@ func findModelByID(modelID string, catalogs ...[]*ModelInfo) *ModelInfo {
 	return nil
 }
 
+// getStaticModelIndex returns the ID to model index over the static catalogs,
+// building it on first use and reusing it until the catalog is replaced.
+//
+// LookupStaticModelInfo runs several times per request and used to walk every
+// catalog in order. The index keeps the same first-match-wins precedence: the
+// fixed catalogs are visited in order, then the on-demand meta catalog.
+func getStaticModelIndex() map[string]*ModelInfo {
+	data := getModels()
+	if cached := modelsCatalogStore.index.Load(); cached != nil && cached.data == data {
+		return cached.byID
+	}
+	modelsCatalogStore.mu.Lock()
+	defer modelsCatalogStore.mu.Unlock()
+	data = modelsCatalogStore.data
+	if cached := modelsCatalogStore.index.Load(); cached != nil && cached.data == data {
+		return cached.byID
+	}
+	index := make(map[string]*ModelInfo)
+	for _, models := range staticModelCatalogs(data) {
+		for _, m := range models {
+			if m == nil || m.ID == "" {
+				continue
+			}
+			if _, exists := index[m.ID]; !exists {
+				index[m.ID] = m
+			}
+		}
+	}
+	if data != nil {
+		for _, m := range data.Meta {
+			if m == nil || m.ID == "" {
+				continue
+			}
+			if _, exists := index[m.ID]; !exists {
+				index[m.ID] = m
+			}
+		}
+	}
+	modelsCatalogStore.index.Store(&staticModelIndex{data: data, byID: index})
+	return index
+}
+
 // LookupStaticModelInfo searches all static model definitions for a model by ID.
 // Returns nil if no matching model is found.
 func LookupStaticModelInfo(modelID string) *ModelInfo {
@@ -608,10 +650,11 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		return nil
 	}
 
-	data := getModels()
-	if found := findModelByID(modelID, staticModelCatalogs(data)...); found != nil {
+	if found := getStaticModelIndex()[modelID]; found != nil {
 		return cloneModelInfo(found)
 	}
+
+	data := getModels()
 
 	// The Devin and Meta catalogs are assembled on demand, and assembling them
 	// clones every model they hold. Look the ID up in the catalog sources
@@ -619,10 +662,6 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 	if found := findDevinModelByID(modelID, data); found != nil {
 		return cloneModelInfo(found)
 	}
-	if found := findModelByID(modelID, data.Meta); found != nil {
-		return cloneModelInfo(found)
-	}
-
 	// Dated and bracketed Claude variants (claude-sonnet-5-5-20261001,
 	// claude-opus-5-5[1m]) share the capabilities of their catalog entry.
 	for _, familyID := range claudeFamilyModelIDs(modelID) {

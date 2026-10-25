@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -27,6 +28,16 @@ var embeddedModelsJSON []byte
 type modelStore struct {
 	mu   sync.RWMutex
 	data *staticModelsJSON
+	// index caches the ID→model lookup built over one data snapshot. The cached
+	// snapshot pointer is compared before use, so replacing the catalog
+	// invalidates the index without a separate invalidation step.
+	index atomic.Pointer[staticModelIndex]
+}
+
+// staticModelIndex is the cached lookup for one catalog snapshot.
+type staticModelIndex struct {
+	data *staticModelsJSON
+	byID map[string]*ModelInfo
 }
 
 var modelsCatalogStore = &modelStore{}

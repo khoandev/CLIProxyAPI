@@ -59,7 +59,7 @@ func TestMaskingKeepsRequestBodyReadable(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = req
 
-	if !shouldMaskAntigravityRequest(c) {
+	if !shouldMaskAntigravityRequest(c, maskHints(c)) {
 		t.Fatal("expected antigravity masking for a gemini model")
 	}
 	rest, err := io.ReadAll(c.Request.Body)

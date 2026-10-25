@@ -94,7 +94,12 @@ func ApplyPayloadConfigWithTrackedPathsForExecutor(cfg *config.Config, targetExe
 			}
 			// Default-rule existence checks scan source per candidate path; index
 			// its top-level members once so absent-path lookups skip a full rescan.
-			sourceIndex := util.NewJSONIndex(source)
+			// Only the default rules consult the index, so an Override/Filter-only
+			// configuration skips the scan and the map allocation entirely.
+			var sourceIndex util.JSONIndex
+			if len(rules.Default) != 0 || len(rules.DefaultRaw) != 0 {
+				sourceIndex = util.NewJSONIndex(source)
+			}
 			appliedDefaults := make(map[string]struct{})
 			// Apply default rules: first write wins per field across all matching rules.
 			for i := range rules.Default {
@@ -714,10 +719,12 @@ func appendPayloadPathPart(path, part string) string {
 }
 
 func payloadValueAtPath(payload []byte, path string) gjson.Result {
+	// The result is consumed by the caller and never retained, so it can alias
+	// the payload instead of copying it.
 	if path == "" {
-		return gjson.ParseBytes(payload)
+		return util.ParseGJSONBytesNoCopy(payload)
 	}
-	return gjson.GetBytes(payload, path)
+	return util.GetGJSONBytesNoCopy(payload, path)
 }
 
 func payloadQueryMatches(item gjson.Result, query string) bool {

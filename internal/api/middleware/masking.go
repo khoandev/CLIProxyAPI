@@ -6,7 +6,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
-	"github.com/tidwall/gjson"
 )
 
 // maskRule is one replacement applied to a response body.
@@ -27,6 +26,10 @@ type maskRule struct {
 type maskRuleSet struct {
 	rules   []maskRule
 	needles []string
+	// variants holds every cased form of needles that a rule can match, so the
+	// response prefilter can use SIMD substring search instead of a folded
+	// byte-at-a-time scan.
+	variants []string
 }
 
 // brandMaskRules hides upstream vendor branding (kiraai.vn, opencode2api) behind
@@ -77,11 +80,17 @@ var (
 // a response never allocates: brand always applies, plus at most one profile
 // family, and the profile families are mutually exclusive.
 var (
-	brandOnlySet        = brandMaskRules
+	brandOnlySet        = withNeedleVariants(brandMaskRules)
 	brandClaudeSet      = joinMaskRuleSets(brandMaskRules, kiroMaskRules(claudeMaskProfile))
 	brandOpenAISet      = joinMaskRuleSets(brandMaskRules, kiroMaskRules(openAIMaskProfile))
 	brandAntigravitySet = joinMaskRuleSets(antigravityMaskRules, brandMaskRules)
 )
+
+// withNeedleVariants fills the cased needle variants the prefilter scans for.
+func withNeedleVariants(set maskRuleSet) maskRuleSet {
+	set.variants = needleVariants(set.needles)
+	return set
+}
 
 // kiroMaskRules builds the kiro replacement table for a profile with every cased
 // replacement already resolved.
@@ -107,7 +116,7 @@ func joinMaskRuleSets(sets ...maskRuleSet) maskRuleSet {
 		joined.rules = append(joined.rules, set.rules...)
 		joined.needles = append(joined.needles, set.needles...)
 	}
-	return joined
+	return withNeedleVariants(joined)
 }
 
 // newMaskProfile builds a profile with every cased replacement precomputed.
@@ -136,13 +145,44 @@ func MaskingMiddleware() gin.HandlerFunc {
 	}
 }
 
+// maskRequestHints holds the request facts both rule checks need, resolved once.
+//
+// The two checks used to parse the query string and lower-case the URL path
+// independently, which duplicated that work for every request.
+type maskRequestHints struct {
+	model string // "model" query parameter, "" when absent
+	path  string // lower-cased URL path
+}
+
+// maskHintsContextKey caches the resolved hints for one request.
+const maskHintsContextKey = "cpa.masking.hints"
+
+// maskHints resolves the query model and the lower-cased path once per request.
+func maskHints(c *gin.Context) maskRequestHints {
+	if c == nil || c.Request == nil {
+		return maskRequestHints{}
+	}
+	if cached, ok := c.Get(maskHintsContextKey); ok {
+		if hints, ok := cached.(maskRequestHints); ok {
+			return hints
+		}
+	}
+	hints := maskRequestHints{model: c.Query("model")}
+	if c.Request.URL != nil {
+		hints.path = strings.ToLower(c.Request.URL.Path)
+	}
+	c.Set(maskHintsContextKey, hints)
+	return hints
+}
+
 // maskRuleSetForRequest resolves which branding applies to a request. Brand always
 // applies; kiro and antigravity are mutually exclusive profile families.
 func maskRuleSetForRequest(c *gin.Context) maskRuleSet {
-	if shouldMaskAntigravityRequest(c) {
+	hints := maskHints(c)
+	if shouldMaskAntigravityRequest(c, hints) {
 		return brandAntigravitySet
 	}
-	if profile, ok := maskProfileForRequest(c); ok {
+	if profile, ok := maskProfileForRequest(c, hints); ok {
 		if profile == openAIMaskProfile {
 			return brandOpenAISet
 		}
@@ -172,7 +212,7 @@ func requestBodyModel(c *gin.Context) string {
 	if c.Request != nil && c.Request.Body != nil {
 		bodyBytes, err := util.SharedRequestBody(c)
 		if err == nil {
-			model = gjson.GetBytes(bodyBytes, "model").String()
+			model = util.GetGJSONBytesNoCopy(bodyBytes, "model").String()
 		}
 	}
 	c.Set(requestBodyModelContextKey, model)
@@ -230,48 +270,25 @@ func (s maskRuleSet) mask(b []byte) []byte {
 	return out
 }
 
-// containsNeedleBytes reports whether b carries any root needle of the set,
-// ignoring ASCII letter case.
-func (s maskRuleSet) containsNeedleBytes(b []byte) bool {
-	for _, needle := range s.needles {
-		if containsFoldASCII(b, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-// containsNeedleString reports whether str carries any root needle of the set,
-// ignoring ASCII letter case.
-func (s maskRuleSet) containsNeedleString(str string) bool {
-	for _, needle := range s.needles {
-		if containsFoldString(str, needle) {
-			return true
-		}
-	}
-	return false
-}
-
 // maskProfileForRequest checks whether the incoming request targets a masked
 // model and returns the branding profile to apply.
-func maskProfileForRequest(c *gin.Context) (maskProfile, bool) {
+func maskProfileForRequest(c *gin.Context, hints maskRequestHints) (maskProfile, bool) {
 	if c == nil || c.Request == nil {
 		return maskProfile{}, false
 	}
 
 	// 1. Query parameter `model`
-	if queryModel := c.Query("model"); queryModel != "" {
-		if profile, ok := profileForModel(queryModel); ok {
+	if hints.model != "" {
+		if profile, ok := profileForModel(hints.model); ok {
 			return profile, true
 		}
 	}
 
 	// 2. URL path
-	path := strings.ToLower(c.Request.URL.Path)
-	if strings.Contains(path, "claude") {
+	if strings.Contains(hints.path, "claude") {
 		return claudeMaskProfile, true
 	}
-	if matchesGPT56Model(path) {
+	if matchesGPT56Model(hints.path) {
 		return openAIMaskProfile, true
 	}
 
@@ -314,21 +331,20 @@ func matchesGPT56Model(m string) bool {
 }
 
 // shouldMaskAntigravityRequest checks whether the incoming request is targeting a Gemini model.
-func shouldMaskAntigravityRequest(c *gin.Context) bool {
+func shouldMaskAntigravityRequest(c *gin.Context, hints maskRequestHints) bool {
 	if c == nil || c.Request == nil {
 		return false
 	}
 
 	// 1. Check query parameter `model`
-	if queryModel := c.Query("model"); queryModel != "" {
-		if isGeminiModel(queryModel) {
+	if hints.model != "" {
+		if isGeminiModel(hints.model) {
 			return true
 		}
 	}
 
 	// 2. Check URL path
-	path := strings.ToLower(c.Request.URL.Path)
-	if strings.Contains(path, "gemini") {
+	if strings.Contains(hints.path, "gemini") {
 		return true
 	}
 

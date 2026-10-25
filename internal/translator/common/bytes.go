@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -33,6 +34,33 @@ func NewRawArrayItems(capacity int64) [][]byte {
 		return nil
 	}
 	return make([][]byte, 0, int(capacity))
+}
+
+// AppendRawJSONString merges one JSON value into an accumulated raw JSON string
+// and returns the merged bytes, quotes included.
+//
+// JSON string escaping works per character, so concatenating the escaped bodies
+// of two parts is identical to escaping their concatenation. Keeping the raw
+// bytes avoids unescaping and re-escaping a multi-megabyte payload, and the
+// first part is returned as is instead of being copied into a buffer.
+func AppendRawJSONString(acc []byte, value gjson.Result) []byte {
+	part := util.GJSONRawBytesNoCopy(value)
+	if value.Type != gjson.String || len(part) < 2 || part[0] != '"' || part[len(part)-1] != '"' {
+		// Non-string values, and any shape gjson did not hand back as a quoted
+		// literal, are escaped here so the caller always gets valid raw JSON.
+		escaped, err := json.Marshal(value.String())
+		if err != nil {
+			return acc
+		}
+		part = escaped
+	}
+	if len(acc) == 0 {
+		return part
+	}
+	merged := make([]byte, 0, len(acc)+len(part)-2)
+	merged = append(merged, acc[:len(acc)-1]...)
+	merged = append(merged, part[1:]...)
+	return merged
 }
 
 func JoinRawArray(items [][]byte) []byte {

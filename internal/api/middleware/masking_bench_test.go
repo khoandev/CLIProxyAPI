@@ -104,17 +104,3 @@ func BenchmarkMaskingResponseWriterClaude(b *testing.B) {
 func BenchmarkMaskingResponseWriterGemini(b *testing.B) {
 	benchmarkMasking(b, brandAntigravitySet)
 }
-
-// BenchmarkResponseWriterWrapperHeaderCapture measures the per-chunk header
-// capture cost of the logging wrapper on a streaming response.
-func BenchmarkResponseWriterWrapperHeaderCapture(b *testing.B) {
-	c, _ := newBenchGinWriter()
-	wrapper := NewResponseWriterWrapper(c.Writer, &testRequestLogger{enabled: true}, &RequestInfo{
-		URL:     "/v1/chat/completions",
-		Method:  http.MethodPost,
-		Headers: map[string][]string{"Content-Type": {"application/json"}},
-	})
-	c.Writer = wrapper
-	wrapper.WriteHeader(http.StatusOK)
-	benchWriteChunks(b, wrapper.Write)
-}

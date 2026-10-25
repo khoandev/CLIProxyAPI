@@ -472,7 +472,7 @@ func ConvertCodexResponseToOpenAI(_ context.Context, modelName string, originalR
 // Returns:
 //   - []byte: An OpenAI-compatible JSON response containing all message content and metadata
 func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, _ *any) []byte {
-	rootResult := gjson.ParseBytes(rawJSON)
+	rootResult := util.ParseGJSONBytesNoCopy(rawJSON)
 	// Verify this is a terminal response event.
 	responseType := rootResult.Get("type").String()
 	if responseType != "response.completed" && responseType != "response.incomplete" {
@@ -483,7 +483,11 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 
 	responseResult := rootResult.Get("response")
 
-	template := []byte(`{"id":"","object":"chat.completion","created":123456,"model":"model","choices":[{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":null,"native_finish_reason":null}]}`)
+	template := []byte(`{"id":"","object":"chat.completion","created":123456,"model":"model","choices":[]}`)
+	// The choice is assembled on its own so that the large content and reasoning
+	// splices happen once, at the end: every later sjson write copies the whole
+	// document it is applied to.
+	choice := []byte(`{"index":0,"message":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":null,"native_finish_reason":null}`)
 
 	if tier := codexResponseServiceTier(responseResult); tier != "" {
 		template, _ = sjson.SetBytes(template, "service_tier", tier)
@@ -532,11 +536,15 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 	var toolMetadata codexChatToolMetadata
 	var toolCalls [][]byte
 	var images [][]byte
+	// Text and reasoning are accumulated as raw JSON string bytes so a
+	// multi-megabyte answer is never unescaped and re-escaped; the first part is
+	// reused without copying. They are spliced in after every other field, and
+	// outside the array branch, so the large document is copied once.
+	var contentRaw, reasoningRaw []byte
+	var hasContent, hasReasoning bool
 	outputResult := responseResult.Get("output")
 	if outputResult.IsArray() {
 		outputArray := outputResult.Array()
-		var contentText string
-		var reasoningText string
 		var messageAnnotations [][]byte
 		annotationKeys := make(map[string]struct{})
 		var contentRuneOffset int64
@@ -551,8 +559,9 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 					summaryArray := summaryResult.Array()
 					for _, summaryItem := range summaryArray {
 						if summaryItem.Get("type").String() == "summary_text" {
-							if text := summaryItem.Get("text").String(); text != "" {
-								reasoningText += text
+							if textNode := summaryItem.Get("text"); textNode.String() != "" {
+								hasReasoning = true
+								reasoningRaw = translatorcommon.AppendRawJSONString(reasoningRaw, textNode)
 							}
 							break
 						}
@@ -563,8 +572,9 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 					contentArray := contentResult.Array()
 					for _, contentItem := range contentArray {
 						if contentItem.Get("type").String() == "reasoning_text" {
-							if text := contentItem.Get("text").String(); text != "" {
-								reasoningText += text
+							if textNode := contentItem.Get("text"); textNode.String() != "" {
+								hasReasoning = true
+								reasoningRaw = translatorcommon.AppendRawJSONString(reasoningRaw, textNode)
 							}
 						}
 					}
@@ -576,8 +586,10 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 						if contentItem.Get("type").String() != "output_text" {
 							continue
 						}
-						text := contentItem.Get("text").String()
-						contentText += text
+						textNode := contentItem.Get("text")
+						text := textNode.String()
+						hasContent = true
+						contentRaw = translatorcommon.AppendRawJSONString(contentRaw, textNode)
 						messageAnnotations = append(messageAnnotations, buildCodexURLCitations(
 							codexAnnotationResults(contentItem.Get("annotations")),
 							contentRuneOffset,
@@ -622,27 +634,18 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 			}
 		}
 
-		// Set content and reasoning content if found
-		if contentText != "" {
-			template, _ = sjson.SetBytes(template, "choices.0.message.content", contentText)
-		}
-
-		if reasoningText != "" {
-			template, _ = sjson.SetBytes(template, "choices.0.message.reasoning_content", reasoningText)
-		}
-
 		if len(messageAnnotations) > 0 {
-			template, _ = sjson.SetRawBytes(template, "choices.0.message.annotations", translatorcommon.JoinRawArray(messageAnnotations))
+			choice, _ = sjson.SetRawBytes(choice, "message.annotations", translatorcommon.JoinRawArray(messageAnnotations))
 		}
 
 		// Add tool calls if any
 		if len(toolCalls) > 0 {
-			template, _ = sjson.SetRawBytes(template, "choices.0.message.tool_calls", translatorcommon.JoinRawArray(toolCalls))
+			choice, _ = sjson.SetRawBytes(choice, "message.tool_calls", translatorcommon.JoinRawArray(toolCalls))
 		}
 
 		// Add images if any
 		if len(images) > 0 {
-			template, _ = sjson.SetRawBytes(template, "choices.0.message.images", translatorcommon.JoinRawArray(images))
+			choice, _ = sjson.SetRawBytes(choice, "message.images", translatorcommon.JoinRawArray(images))
 		}
 	}
 
@@ -671,10 +674,20 @@ func ConvertCodexResponseToOpenAINonStream(_ context.Context, _ string, original
 			}
 		}
 		if finishReason != "" {
-			template, _ = sjson.SetBytes(template, "choices.0.finish_reason", finishReason)
-			template, _ = sjson.SetBytes(template, "choices.0.native_finish_reason", nativeFinishReason)
+			choice, _ = sjson.SetBytes(choice, "finish_reason", finishReason)
+			choice, _ = sjson.SetBytes(choice, "native_finish_reason", nativeFinishReason)
 		}
 	}
+
+	// Set content and reasoning content last: they can be megabytes, and every
+	// later write would copy them again.
+	if hasContent {
+		choice, _ = sjson.SetRawBytes(choice, "message.content", contentRaw)
+	}
+	if hasReasoning {
+		choice, _ = sjson.SetRawBytes(choice, "message.reasoning_content", reasoningRaw)
+	}
+	template = translatorcommon.SetRawArrayItems(template, "choices", [][]byte{choice})
 
 	return template
 }

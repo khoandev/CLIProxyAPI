@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -37,7 +38,7 @@ func claudeBlockCanHostCacheControl(block gjson.Result) bool {
 // Returns dst unchanged when cache_control is missing, not an object, or dst is an empty text block.
 func AttachCacheControl(dst []byte, src gjson.Result) []byte {
 	cc := src.Get("cache_control")
-	if !isValidCacheControl(cc) || !claudeBlockCanHostCacheControl(gjson.ParseBytes(dst)) {
+	if !isValidCacheControl(cc) || !claudeBlockCanHostCacheControl(util.ParseGJSONBytesNoCopy(dst)) {
 		return dst
 	}
 	out, err := sjson.SetRawBytes(dst, "cache_control", []byte(cc.Raw))

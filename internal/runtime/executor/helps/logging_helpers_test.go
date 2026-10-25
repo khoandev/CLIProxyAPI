@@ -1,6 +1,7 @@
 package helps
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -43,7 +44,7 @@ func TestRequestLoggingDoesNotMarkUpstreamAttempt(t *testing.T) {
 	}
 }
 
-func TestRecordAPIRequestClonesDeferredBodyWhenRequestLogDisabled(t *testing.T) {
+func TestRecordAPIRequestDefersBodyWhenRequestLogDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(recorder)
@@ -55,7 +56,6 @@ func TestRecordAPIRequestClonesDeferredBodyWhenRequestLogDisabled(t *testing.T) 
 		Method: http.MethodPost,
 		Body:   body,
 	})
-	body[10] = 'X'
 
 	value, exists := ginCtx.Get(logging.DeferredAPIRequestContextKey)
 	if !exists {
@@ -67,7 +67,10 @@ func TestRecordAPIRequestClonesDeferredBodyWhenRequestLogDisabled(t *testing.T) 
 	}
 	captured := string(requests[0]())
 	if !strings.Contains(captured, `{"model":"original"}`) {
-		t.Fatalf("captured API request = %q, want original body", captured)
+		t.Fatalf("captured API request = %q, want the outbound body", captured)
+	}
+	if used, _ := ginCtx.Get(deferredAPIRequestBytesKey); used != len(body) {
+		t.Fatalf("deferred byte accounting = %v, want %d", used, len(body))
 	}
 }
 
@@ -153,5 +156,30 @@ func TestAPIResponseAttemptsAreSeparated(t *testing.T) {
 				t.Fatalf("API response attempts are not separated by one blank line:\n%q\nwant boundary %q", response, wantBoundary)
 			}
 		})
+	}
+}
+
+// TestDeferAPIRequestDoesNotCopyBody guards the default request-log:false path
+// against copying the outbound body: a copy costs one full payload allocation
+// per upstream attempt.
+func TestDeferAPIRequestDoesNotCopyBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := bytes.Repeat([]byte(`{"model":"gpt-5.1","messages":[{"role":"user","content":"bench"}]}`), 14564) // ~1 MiB
+	info := UpstreamRequestLog{
+		URL:    "https://upstream.example/v1/responses",
+		Method: http.MethodPost,
+		Body:   body,
+	}
+	cfg := &config.Config{}
+
+	result := testing.Benchmark(func(b *testing.B) {
+		for b.Loop() {
+			ginCtx, _ := gin.CreateTestContext(nil)
+			ctx := context.WithValue(context.Background(), "gin", ginCtx)
+			RecordAPIRequest(ctx, cfg, info)
+		}
+	})
+	if alloc := result.AllocedBytesPerOp(); alloc >= 64<<10 {
+		t.Fatalf("deferred API request allocates %d B/op for a %d byte body, want under 64 KiB", alloc, len(body))
 	}
 }

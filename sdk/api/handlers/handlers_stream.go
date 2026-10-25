@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
@@ -901,4 +902,16 @@ func streamDeliveryCompletion(ctx context.Context, outcome pluginapi.RequestComp
 		return pluginapi.RequestCompletionCanceled, 0, deliveryErr
 	}
 	return pluginapi.RequestCompletionFailed, executionErrorMessage(deliveryErr).StatusCode, deliveryErr
+}
+
+// WriteSSEData writes one SSE data frame ("data: <chunk>\n\n") in a single
+// Write call. Callers use it instead of fmt.Fprintf, which allocates the string
+// conversion plus fmt's internal buffer for every streamed chunk.
+func WriteSSEData(w io.Writer, chunk []byte) error {
+	buf := make([]byte, 0, len(chunk)+8)
+	buf = append(buf, "data: "...)
+	buf = append(buf, chunk...)
+	buf = append(buf, '\n', '\n')
+	_, err := w.Write(buf)
+	return err
 }

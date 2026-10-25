@@ -11,6 +11,7 @@ import (
 
 	applypatch "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/apply-patch"
 	translatorcommon "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/common"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -912,7 +913,7 @@ func ConvertClaudeResponseToOpenAIResponses(ctx context.Context, modelName strin
 		return [][]byte{}
 	}
 	rawJSON = bytes.TrimSpace(rawJSON[5:])
-	root := gjson.ParseBytes(rawJSON)
+	root := util.ParseGJSONBytesNoCopy(rawJSON)
 	ev := root.Get("type").String()
 	var out [][]byte
 
@@ -1470,7 +1471,7 @@ func ConvertClaudeResponseToOpenAIResponsesNonStream(ctx context.Context, _ stri
 
 	// Walk through SSE chunks to fill state
 	for _, ch := range chunks {
-		root := gjson.ParseBytes(ch)
+		root := util.ParseGJSONBytesNoCopy(ch)
 		ev := root.Get("type").String()
 		// Match the streaming path: no input after the protocol terminator.
 		if ev == "message_stop" {

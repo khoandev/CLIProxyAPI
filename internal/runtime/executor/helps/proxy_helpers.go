@@ -55,6 +55,10 @@ func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 		httpClient.Transport = rt
 	}
 
+	// A nil Transport is part of this function's contract: providers that own a
+	// credential-scoped pool (Antigravity) install their transport when the
+	// returned client has none, and everything else falls back to
+	// http.DefaultTransport through the transport decorator.
 	return httpClient
 }
 

@@ -225,15 +225,25 @@ func (h *GeminiAPIHandler) forwardInteractionsStream(c *gin.Context, flusher htt
 				return
 			}
 			trimmed := bytes.TrimSpace(chunk)
+			terminated := bytes.HasSuffix(chunk, []byte("\n\n"))
 			if bytes.HasPrefix(trimmed, []byte("event:")) || bytes.HasPrefix(trimmed, []byte("data:")) {
+				// Already framed upstream: forward verbatim and only add the
+				// terminator when the chunk does not carry one.
 				_, _ = c.Writer.Write(chunk)
-			} else {
-				_, _ = c.Writer.Write([]byte("data: "))
-				_, _ = c.Writer.Write(chunk)
+				if !terminated {
+					_, _ = c.Writer.Write([]byte("\n\n"))
+				}
+				return
 			}
-			if !bytes.HasSuffix(chunk, []byte("\n\n")) {
-				_, _ = c.Writer.Write([]byte("\n\n"))
+			// Frame the chunk in one write; keep the terminator only when the
+			// upstream chunk does not already carry it.
+			framed := make([]byte, 0, len(chunk)+6)
+			framed = append(framed, "data: "...)
+			framed = append(framed, chunk...)
+			if !terminated {
+				framed = append(framed, '\n', '\n')
 			}
+			_, _ = c.Writer.Write(framed)
 		},
 		WriteTerminalError: func(errMsg *interfaces.ErrorMessage) {
 			if errMsg == nil {

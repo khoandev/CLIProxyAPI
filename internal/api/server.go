@@ -177,6 +177,10 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	engine.Use(logging.GinLogrusRecovery())
 	engine.Use(logging.CPATraceIDMiddleware())
 	engine.Use(s.maxRequestBodyBytesMiddleware())
+	// Admission runs before every middleware that reads or retains the request
+	// body, so a rejected request costs one status write instead of a full body
+	// read and a request-log wrapper. Management paths still bypass it.
+	engine.Use(s.inFlightAdmissionMiddleware())
 	for _, mw := range optionState.extraMiddleware {
 		engine.Use(mw)
 	}
@@ -243,7 +247,6 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	// Home heartbeat gate: when home is enabled, block all endpoints with 503 until the
 	// subscribe-config heartbeat connection is healthy.
 	engine.Use(s.homeHeartbeatMiddleware())
-	engine.Use(s.inFlightAdmissionMiddleware())
 	engine.Use(s.exampleAPIKeySafeModeMiddleware())
 
 	// Setup routes
@@ -273,6 +276,12 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	s.server = &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
 		Handler: engine,
+		// ReadHeaderTimeout bounds a slow or stalled header read without
+		// capping request bodies. WriteTimeout and ReadTimeout are deliberately
+		// left unset: they would kill long-lived SSE streams.
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	return s

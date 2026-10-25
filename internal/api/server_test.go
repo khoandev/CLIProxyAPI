@@ -607,12 +607,12 @@ func TestHomeCodexAlphaSearchEndsSelectionAcrossDirectHTTPPaths(t *testing.T) {
 	}
 }
 
-func newTestServer(t *testing.T) *Server {
+func newTestServer(t testing.TB) *Server {
 	t.Helper()
 	return newTestServerWithOptions(t)
 }
 
-func newTestServerWithOptions(t *testing.T, opts ...ServerOption) *Server {
+func newTestServerWithOptions(t testing.TB, opts ...ServerOption) *Server {
 	t.Helper()
 	cfg := &proxyconfig.Config{
 		SDKConfig: sdkconfig.SDKConfig{
@@ -622,7 +622,7 @@ func newTestServerWithOptions(t *testing.T, opts ...ServerOption) *Server {
 	return newTestServerWithConfig(t, cfg, opts...)
 }
 
-func newTestServerWithConfig(t *testing.T, cfg *proxyconfig.Config, opts ...ServerOption) *Server {
+func newTestServerWithConfig(t testing.TB, cfg *proxyconfig.Config, opts ...ServerOption) *Server {
 	t.Helper()
 
 	gin.SetMode(gin.TestMode)
