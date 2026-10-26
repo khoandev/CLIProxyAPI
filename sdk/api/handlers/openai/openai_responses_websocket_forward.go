@@ -179,6 +179,9 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 				if eventType == "response.subscription_usage" {
 					continue
 				}
+				// Record before forwarding so a client interrupt for this id can
+				// never arrive ahead of the registration.
+				opts.localInterrupt.remember(gjson.GetBytes(payloads[i], "response.id").String())
 				if eventType == "response.created" {
 					responseStarted = true
 					completed = false

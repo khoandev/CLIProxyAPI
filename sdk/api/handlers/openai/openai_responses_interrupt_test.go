@@ -270,8 +270,12 @@ func (e *homeInterruptExecutor) InterruptExecutionSession(ctx context.Context, s
 }
 
 type blockingHTTPInterruptExecutor struct {
-	calls    atomic.Int32
-	canceled atomic.Bool
+	calls atomic.Int32
+	// canceled is closed by the streaming goroutine once its context is done.
+	// A channel keeps the test's observation synchronous instead of racing the
+	// executor goroutine that records the cancellation.
+	canceled     chan struct{}
+	canceledOnce sync.Once
 }
 
 func (*blockingHTTPInterruptExecutor) Identifier() string { return "codex" }
@@ -292,7 +296,7 @@ func (e *blockingHTTPInterruptExecutor) ExecuteStream(ctx context.Context, _ *co
 		}
 		chunks <- coreexecutor.StreamChunk{Payload: []byte(`{"type":"response.created","response":{"id":"r-http"}}`)}
 		<-ctx.Done()
-		e.canceled.Store(true)
+		e.canceledOnce.Do(func() { close(e.canceled) })
 	}()
 	return &coreexecutor.StreamResult{Chunks: chunks}, nil
 }
@@ -317,7 +321,7 @@ func (*blockingHTTPInterruptExecutor) InterruptExecutionSession(context.Context,
 // cancels an HTTP upstream turn and lets the same socket continue.
 func TestResponsesInterruptStopsHTTPUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	executor := &blockingHTTPInterruptExecutor{}
+	executor := &blockingHTTPInterruptExecutor{canceled: make(chan struct{})}
 	manager := coreauth.NewManager(nil, nil, nil)
 	manager.SetConfig(&config.Config{})
 	manager.RegisterExecutor(executor)
@@ -345,24 +349,30 @@ func TestResponsesInterruptStopsHTTPUpstream(t *testing.T) {
 		t.Fatal(errDial)
 	}
 	defer func() { _ = client.Close() }()
-	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	// Refresh the deadline per read: one deadline for the whole test turns
+	// machine load into a spurious failure.
+	readEvent := func() []byte {
+		t.Helper()
+		if errDeadline := client.SetReadDeadline(time.Now().Add(5 * time.Second)); errDeadline != nil {
+			t.Fatal(errDeadline)
+		}
+		_, payload, errRead := client.ReadMessage()
+		if errRead != nil {
+			t.Fatal(errRead)
+		}
+		return payload
+	}
 	if errSend := client.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"response.create","model":%q,"input":[]}`, model))); errSend != nil {
 		t.Fatal(errSend)
 	}
-	_, created, errRead := client.ReadMessage()
-	if errRead != nil {
-		t.Fatal(errRead)
-	}
+	created := readEvent()
 	if got := gjson.GetBytes(created, "type").String(); got != "response.created" {
 		t.Fatalf("expected response.created, got %s", created)
 	}
 	if errSend := client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.interrupt","response_id":"r-http","mode":"discard_partial_items"}`)); errSend != nil {
 		t.Fatal(errSend)
 	}
-	_, interrupted, errInterrupted := client.ReadMessage()
-	if errInterrupted != nil {
-		t.Fatal(errInterrupted)
-	}
+	interrupted := readEvent()
 	if got := gjson.GetBytes(interrupted, "type").String(); got != "response.incomplete" {
 		t.Fatalf("expected response.incomplete, got %s", interrupted)
 	}
@@ -372,23 +382,19 @@ func TestResponsesInterruptStopsHTTPUpstream(t *testing.T) {
 	if got := gjson.GetBytes(interrupted, "response.incomplete_details.reason").String(); got != "interrupted" {
 		t.Fatalf("interrupt reason = %q, payload %s", got, interrupted)
 	}
-	if !executor.canceled.Load() {
+	select {
+	case <-executor.canceled:
+	case <-time.After(5 * time.Second):
 		t.Fatal("http upstream was not canceled")
 	}
 	if errSend := client.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf(`{"type":"response.create","model":%q,"previous_response_id":"r-http","input":[]}`, model))); errSend != nil {
 		t.Fatal(errSend)
 	}
-	_, followCreated, errFollow := client.ReadMessage()
-	if errFollow != nil {
-		t.Fatal(errFollow)
-	}
+	followCreated := readEvent()
 	if got := gjson.GetBytes(followCreated, "type").String(); got != "response.created" {
 		t.Fatalf("expected follow-up response.created, got %s", followCreated)
 	}
-	_, followDone, errDone := client.ReadMessage()
-	if errDone != nil {
-		t.Fatal(errDone)
-	}
+	followDone := readEvent()
 	if got := gjson.GetBytes(followDone, "type").String(); got != "response.completed" {
 		t.Fatalf("expected follow-up response.completed, got %s", followDone)
 	}

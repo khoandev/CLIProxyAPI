@@ -25,10 +25,6 @@ const (
 	defaultErrorCode = "upstream_error"
 )
 
-// setOptions keeps the in-place rewrite cheap: error bodies are hot-path payloads
-// and an error envelope is always an object we already validated.
-var setOptions = &sjson.Options{Optimistic: true, ReplaceInPlace: true}
-
 // genericFallbackBody is the last-resort payload used when json.Marshal of the
 // generic envelope fails (it cannot for these inputs, so this is purely defensive).
 const genericFallbackBody = `{"error":{"message":"Upstream service error (llmgate.app)","type":"server_error","code":"upstream_error"}}`
@@ -103,6 +99,11 @@ func firstNonSpaceByte(body []byte) int {
 
 // SanitizeJSONErrorBody replaces CJK text inside a JSON error body, preserving the
 // envelope type/code when they are ASCII. Returns the body to use and whether it changed.
+//
+// The sjson writes here must keep their default allocating behavior: callers pass
+// buffers that other readers may still alias, so an in-place rewrite would corrupt
+// every gjson.Result already derived from those bytes (see
+// util.TestNoInPlaceSJSONWrites). This path only runs for bodies that carry CJK.
 func SanitizeJSONErrorBody(body []byte) ([]byte, bool) {
 	if !containsCJKBytes(body) {
 		return body, false
@@ -116,7 +117,7 @@ func SanitizeJSONErrorBody(body []byte) ([]byte, bool) {
 	switch {
 	case errValue.Type == gjson.String:
 		if ContainsCJK(errValue.String()) {
-			if updated, errSet := sjson.SetBytesOptions(out, "error", GenericErrorMessage, setOptions); errSet == nil {
+			if updated, errSet := sjson.SetBytes(out, "error", GenericErrorMessage); errSet == nil {
 				out = updated
 			}
 		}
@@ -129,7 +130,7 @@ func SanitizeJSONErrorBody(body []byte) ([]byte, bool) {
 	if !errValue.Exists() {
 		// Some gateways report the failure as a bare top-level message.
 		if msg := gjson.GetBytes(out, "message"); msg.Type == gjson.String && ContainsCJK(msg.String()) {
-			if updated, errSet := sjson.SetBytesOptions(out, "message", GenericErrorMessage, setOptions); errSet == nil {
+			if updated, errSet := sjson.SetBytes(out, "message", GenericErrorMessage); errSet == nil {
 				out = updated
 			}
 		}
@@ -160,7 +161,7 @@ func sanitizeErrorObject(body []byte, path string) ([]byte, bool) {
 		if value.Type != gjson.String || !ContainsCJK(value.String()) {
 			continue
 		}
-		if updated, errSet := sjson.SetBytesOptions(out, key, field.value, setOptions); errSet == nil {
+		if updated, errSet := sjson.SetBytes(out, key, field.value); errSet == nil {
 			out = updated
 		}
 		changed = true

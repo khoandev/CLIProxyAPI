@@ -25,10 +25,44 @@ type responsesLocalInterrupt struct {
 	mu     sync.Mutex
 	active bool
 	frames chan []byte
+	// known holds the response ids this session already forwarded to the
+	// client. An interrupt may only name one of them: the client cannot know an
+	// id the proxy never emitted, and answering such a frame would otherwise
+	// depend on whether the finished turn's upstream session is still attached.
+	known map[string]struct{}
 }
+
+// responsesLocalInterruptKnownLimit bounds the remembered ids so a long-lived
+// socket cannot grow the set without limit. Exceeding it drops the history,
+// which can only turn a late acknowledgement into a rejection.
+const responsesLocalInterruptKnownLimit = 256
 
 func newResponsesLocalInterrupt() *responsesLocalInterrupt {
 	return &responsesLocalInterrupt{frames: make(chan []byte, 1)}
+}
+
+// remember records a response id this session emitted downstream.
+func (s *responsesLocalInterrupt) remember(id string) {
+	if s == nil || id == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.known == nil || len(s.known) >= responsesLocalInterruptKnownLimit {
+		s.known = make(map[string]struct{}, 4)
+	}
+	s.known[id] = struct{}{}
+}
+
+// knows reports whether the session emitted the response id downstream.
+func (s *responsesLocalInterrupt) knows(id string) bool {
+	if s == nil || id == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.known[id]
+	return ok
 }
 
 func (s *responsesLocalInterrupt) begin() {
@@ -98,6 +132,23 @@ func readResponsesWebsocketInput(ctx context.Context, cancel context.CancelCause
 			// response_id, mode, and extension fields must reach upstream unchanged.
 			if json.Valid(payload) && gjson.GetBytes(payload, "type").String() == "response.interrupt" {
 				appendResponsesInterruptDiagnostic(timeline, payload, "")
+				// The client can only learn a response id from an event this
+				// proxy forwarded, so an interrupt naming any other id is
+				// invalid. Reject it here instead of relying on upstream
+				// attachment: otherwise the same frame is forwarded to a live
+				// upstream or acknowledged locally, depending on turn timing.
+				if !local.knows(gjson.GetBytes(payload, "response_id").String()) {
+					appendResponsesInterruptDiagnostic(timeline, payload, "rejected")
+					_, errWrite := writeResponsesWebsocketError(writer, nil, &interfaces.ErrorMessage{
+						StatusCode: http.StatusBadRequest,
+						Error:      fmt.Errorf("response.interrupt references an unknown response id"),
+					})
+					if errWrite != nil {
+						cancel(errWrite)
+						return
+					}
+					continue
+				}
 				errInterrupt := interrupt(payload)
 				switch {
 				case errInterrupt == nil:

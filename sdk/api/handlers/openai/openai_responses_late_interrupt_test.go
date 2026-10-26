@@ -130,12 +130,22 @@ func TestResponsesLateInterruptDoesNotPoisonNextCreate(t *testing.T) {
 			t.Fatal(errWrite)
 		}
 	}
-	expect := func(event, id string) {
+	readEvent := func() []byte {
 		t.Helper()
+		// Refresh per read: a single deadline for the whole test turns machine
+		// load into a spurious failure instead of a wrong-sequence assertion.
+		if errDeadline := client.SetReadDeadline(time.Now().Add(5 * time.Second)); errDeadline != nil {
+			t.Fatal(errDeadline)
+		}
 		_, payload, errRead := client.ReadMessage()
 		if errRead != nil {
 			t.Fatal(errRead)
 		}
+		return payload
+	}
+	expect := func(event, id string) {
+		t.Helper()
+		payload := readEvent()
 		if gjson.GetBytes(payload, "type").String() != event || gjson.GetBytes(payload, "response.id").String() != id {
 			t.Fatalf("expected %s for %s, got %s", event, id, payload)
 		}
