@@ -69,21 +69,54 @@ func BenchmarkAppendAPIResponseChunk1000(b *testing.B) {
 	chunkBenchmarkAppend(b, 1000)
 }
 
+// appendChunksOnce appends chunks through the request-log path once and
+// returns how long the pass took. Every pass starts from a fresh gin context so
+// the passes stay independent.
+func appendChunksOnce(chunks int) time.Duration {
+	gin.SetMode(gin.TestMode)
+	ginCtx, _ := gin.CreateTestContext(nil)
+	ctx := context.WithValue(context.Background(), "gin", ginCtx)
+	cfg := &config.Config{SDKConfig: config.SDKConfig{RequestLog: true}}
+	chunk := []byte(`data: {"choices":[{"delta":{"content":"` + string(bytes.Repeat([]byte("a"), 64)) + `"}}]}` + "\n\n")
+
+	start := time.Now()
+	for range chunks {
+		AppendAPIResponseChunk(ctx, cfg, chunk)
+	}
+	return time.Since(start)
+}
+
 // TestAppendAPIResponseChunkScalesLinearly guards against reintroducing the
 // per-chunk aggregate rebuild, which made appending O(n^2).
 func TestAppendAPIResponseChunkScalesLinearly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing based")
 	}
-	small := testing.Benchmark(func(b *testing.B) { chunkBenchmarkAppend(b, 500) })
-	large := testing.Benchmark(func(b *testing.B) { chunkBenchmarkAppend(b, 1000) })
-	if small.N == 0 || large.N == 0 {
-		t.Fatalf("benchmark produced no samples")
+	// Interleaved samples with a per-size minimum: a single benchmark run
+	// reports a mean, so any load spike while the package runs in parallel
+	// with the rest of the suite shows up as superlinear scaling.
+	const samples = 12
+	var smallBest, largeBest time.Duration
+	for i := range samples {
+		small := appendChunksOnce(500)
+		large := appendChunksOnce(1000)
+		if i == 0 || small < smallBest {
+			smallBest = small
+		}
+		if i == 0 || large < largeBest {
+			largeBest = large
+		}
 	}
-	ratio := float64(large.NsPerOp()) / float64(small.NsPerOp())
-	if ratio >= 2.5 {
-		t.Fatalf("1000 chunks / 500 chunks = %.2fx, want < 2.5x (quadratic behaviour is back)", ratio)
+	if smallBest <= 0 {
+		t.Fatal("benchmark produced no samples")
 	}
-	t.Logf("500 chunks = %s/op, 1000 chunks = %s/op, ratio %.2f",
-		time.Duration(small.NsPerOp()), time.Duration(large.NsPerOp()), ratio)
+	// Linear growth is 2x for twice the chunks; the per-chunk rebuild this
+	// guards against is 4x. The limit sits between them so allocation noise on
+	// a loaded machine cannot flip it.
+	const maxRatio = 3.0
+	ratio := float64(largeBest) / float64(smallBest)
+	if ratio >= maxRatio {
+		t.Fatalf("1000 chunks / 500 chunks = %.2fx, want < %.1fx (quadratic behaviour is back)", ratio, maxRatio)
+	}
+	t.Logf("500 chunks = %s/pass, 1000 chunks = %s/pass, ratio %.2f", smallBest, largeBest, ratio)
 }

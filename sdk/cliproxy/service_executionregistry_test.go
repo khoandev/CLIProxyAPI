@@ -1450,7 +1450,9 @@ func TestServiceHeartbeatFailoverDoesNotDrainBlockingScope(t *testing.T) {
 	}
 	select {
 	case <-secondSubscribe:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
+		// The supervisor retries with an initial backoff of up to a second, so
+		// a one second deadline races the backoff instead of the failover.
 		t.Fatal("new subscription did not start while the old scope remained active")
 	}
 	service.homeMu.Lock()

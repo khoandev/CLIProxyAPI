@@ -1099,7 +1099,10 @@ func TestAccountedHomeStreamErrorCancellationReleasesSelection(t *testing.T) {
 	chunks := make(chan cliproxyexecutor.StreamChunk, 2)
 	chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("initial")}
 	chunks <- cliproxyexecutor.StreamChunk{Err: &Error{HTTPStatus: http.StatusBadGateway, Message: "upstream failed"}}
-	close(chunks)
+	// The source stays open: closing it here would let the scope end (and the
+	// selection be released) as soon as the error chunk is produced, so the
+	// "not released before cancellation" assertion below would race the
+	// producer goroutine instead of testing the cancellation path.
 	manager.RegisterExecutor(&homeExecutionStreamExecutor{chunks: chunks})
 	result, errExecute := manager.ExecuteStream(ctx, []string{"home-execution"}, cliproxyexecutor.Request{Model: "model-a"}, cliproxyexecutor.Options{Stream: true})
 	if errExecute != nil {
