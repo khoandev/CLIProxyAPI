@@ -28,6 +28,12 @@ type SDKConfig struct {
 	// positive values set the exact cap.
 	MaxInFlightRequests int `yaml:"max-in-flight-requests" json:"max-in-flight-requests"`
 
+	// ResponseCompression controls negotiated compression of downstream HTTP responses.
+	// It is configured under server.response-compression. Config.ServerResponseCompression
+	// mirrors it for JSON and programmatic access; read the effective value via
+	// Config.EffectiveResponseCompression.
+	ResponseCompression ResponseCompressionConfig `yaml:"response-compression" json:"-"`
+
 	// Client configures client-facing compatibility behavior.
 	Client ClientConfig `yaml:"client" json:"client"`
 

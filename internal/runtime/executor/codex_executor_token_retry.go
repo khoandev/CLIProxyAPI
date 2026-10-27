@@ -45,7 +45,7 @@ func (e *CodexExecutor) replayCodexRequest(
 	current *http.Response,
 ) (*http.Response, error) {
 	apiKey, _ := codexCreds(auth)
-	retryReq, retryUpstreamBody, retryReqErr := e.cacheHelper(ctx, from, url, req, body, opts.Headers)
+	retryReq, retryUpstreamBody, retryReqErr := e.cacheHelper(ctx, from, url, req, body, auth, opts.Headers)
 	if retryReqErr != nil {
 		return nil, retryReqErr
 	}

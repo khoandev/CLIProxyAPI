@@ -524,17 +524,10 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormatsOnce(ctx context.Con
 	var bootstrapErr *interfaces.ErrorMessage
 	readInitialStreamChunks := func() {
 		for {
-			var chunk coreexecutor.StreamChunk
-			var ok bool
-			if ctx != nil {
-				select {
-				case <-ctx.Done():
-					streamCanceledBeforeRead = true
-					return
-				case chunk, ok = <-chunks:
-				}
-			} else {
-				chunk, ok = <-chunks
+			chunk, ok, canceled := nextStreamChunk(ctx, nil, nil, chunks)
+			if canceled {
+				streamCanceledBeforeRead = true
+				return
 			}
 			if !ok {
 				streamClosedBeforeRead = true

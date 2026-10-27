@@ -1588,7 +1588,8 @@ type statusErr struct {
 	credentialScoped bool
 	// ctxWindowErr is non-nil for normalized Codex context-limit failures.
 	// ponytail: pointer chain instead of a bool flag so errors.As exposes metadata with no extra API.
-	ctxWindowErr *cliproxyauth.ContextWindowExceededError
+	ctxWindowErr    *cliproxyauth.ContextWindowExceededError
+	streamTruncated bool
 }
 
 func (e statusErr) Error() string {
@@ -1610,6 +1611,10 @@ func (e statusErr) Unwrap() error {
 	}
 	return nil
 }
+
+// IsStreamTruncated marks a locally synthesized failure for an accepted
+// upstream stream that ended without its terminal frame.
+func (e statusErr) IsStreamTruncated() bool { return e.streamTruncated }
 
 const openAICompatTPMFallbackRetryAfter = time.Minute
 

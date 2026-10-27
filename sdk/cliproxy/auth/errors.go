@@ -66,6 +66,14 @@ func isUpstreamTimeoutError(err error) bool {
 	return hasUpstreamTimeoutMarker(err.Error())
 }
 
+// ErrorCodeStreamTruncated marks locally synthesized failures for accepted
+// upstream streams that ended without a terminal frame. The public status
+// stays 502, but the credential must not cool and the generation must not be
+// replayed on another credential.
+const ErrorCodeStreamTruncated = "stream_truncated"
+
+const streamTruncatedErrorCode = ErrorCodeStreamTruncated
+
 // Error describes an authentication related failure in a provider agnostic format.
 type Error struct {
 	// Code is a short machine readable identifier.
