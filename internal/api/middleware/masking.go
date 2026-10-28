@@ -191,7 +191,10 @@ func maskRuleSetForRequest(c *gin.Context) maskRuleSet {
 // connection instead of letting the rejection through. Brand and path/query
 // rules still apply in that case, so the response stays masked.
 func maskRuleSetForRequestStatus(c *gin.Context, status int) maskRuleSet {
-	allowBody := status < http.StatusMultipleChoices
+	allowBody := status < http.StatusMultipleChoices &&
+		c != nil && c.Request != nil &&
+		(c.Request.Method == http.MethodPost || c.Request.Method == http.MethodPut || c.Request.Method == http.MethodPatch) &&
+		c.Request.URL != nil && isProxyAPIErrorPath(c.Request.URL.Path)
 	hints := maskHints(c)
 	if shouldMaskAntigravityRequest(c, hints, allowBody) {
 		return brandAntigravitySet
