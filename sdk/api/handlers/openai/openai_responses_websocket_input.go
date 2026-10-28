@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -113,7 +114,7 @@ func (s *responsesLocalInterrupt) framesChan() <-chan []byte {
 // readResponsesWebsocketInput is the only downstream reader. Interrupts are
 // handled immediately so they are not queued behind an active response.
 // The bounded queue backpressures clients instead of retaining unlimited input.
-func readResponsesWebsocketInput(ctx context.Context, cancel context.CancelCauseFunc, conn *websocket.Conn, interrupt func([]byte) error, local *responsesLocalInterrupt, writer *responsesWebsocketWriter, timeline websocketTimelineAppender) (<-chan cliproxyexecutor.WebsocketInput, <-chan struct{}) {
+func readResponsesWebsocketInput(ctx context.Context, cancel context.CancelCauseFunc, conn *websocket.Conn, interrupt func([]byte) error, local *responsesLocalInterrupt, writer *responsesWebsocketWriter, timeline websocketTimelineAppender, epoch *atomic.Uint64) (<-chan cliproxyexecutor.WebsocketInput, <-chan struct{}) {
 	input := make(chan cliproxyexecutor.WebsocketInput, 16)
 	done := make(chan struct{})
 	go func() {
@@ -125,6 +126,7 @@ func readResponsesWebsocketInput(ctx context.Context, cancel context.CancelCause
 				cancel(errRead)
 				return
 			}
+			msgEpoch := epoch.Load()
 			if kind != websocket.TextMessage && kind != websocket.BinaryMessage {
 				continue
 			}
@@ -172,8 +174,9 @@ func readResponsesWebsocketInput(ctx context.Context, cancel context.CancelCause
 					continue
 				}
 			}
+			message := cliproxyexecutor.WebsocketInput{Payload: payload, Epoch: msgEpoch}
 			select {
-			case input <- cliproxyexecutor.WebsocketInput{Payload: payload}:
+			case input <- message:
 			case <-ctx.Done():
 				return
 			}

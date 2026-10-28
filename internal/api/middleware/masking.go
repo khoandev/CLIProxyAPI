@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -140,7 +141,7 @@ func newMaskProfile(domain, token string) maskProfile {
 // streaming and non-streaming responses.
 func MaskingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Writer = &maskingResponseWriter{ResponseWriter: c.Writer, set: maskRuleSetForRequest(c)}
+		c.Writer = &maskingResponseWriter{ResponseWriter: c.Writer, ctx: c}
 		c.Next()
 	}
 }
@@ -178,11 +179,24 @@ func maskHints(c *gin.Context) maskRequestHints {
 // maskRuleSetForRequest resolves which branding applies to a request. Brand always
 // applies; kiro and antigravity are mutually exclusive profile families.
 func maskRuleSetForRequest(c *gin.Context) maskRuleSet {
+	return maskRuleSetForRequestStatus(c, http.StatusOK)
+}
+
+// maskRuleSetForRequestStatus resolves the rule set for a response status.
+//
+// Resolution can read the request body, and a non-success status means the
+// request was answered before any handler consumed it (rejected auth, 404, a
+// redirect). Reading the body then is not allowed: an unauthenticated client
+// can declare a length and never finish sending, and the read would pin the
+// connection instead of letting the rejection through. Brand and path/query
+// rules still apply in that case, so the response stays masked.
+func maskRuleSetForRequestStatus(c *gin.Context, status int) maskRuleSet {
+	allowBody := status < http.StatusMultipleChoices
 	hints := maskHints(c)
-	if shouldMaskAntigravityRequest(c, hints) {
+	if shouldMaskAntigravityRequest(c, hints, allowBody) {
 		return brandAntigravitySet
 	}
-	if profile, ok := maskProfileForRequest(c, hints); ok {
+	if profile, ok := maskProfileForRequest(c, hints, allowBody); ok {
 		if profile == openAIMaskProfile {
 			return brandOpenAISet
 		}
@@ -201,12 +215,22 @@ const requestBodyModelContextKey = "cpa.masking.requestBodyModel"
 // request. The body is restored afterwards so downstream handlers still read
 // the full payload.
 func requestBodyModel(c *gin.Context) string {
+	return requestBodyModelIfAllowed(c, true)
+}
+
+// requestBodyModelIfAllowed is requestBodyModel with an explicit decision about
+// reading the body. It never caches a skipped lookup, so a later caller that is
+// allowed to read still resolves the real model.
+func requestBodyModelIfAllowed(c *gin.Context, allowBody bool) string {
 	if c == nil {
 		return ""
 	}
 	if cached, ok := c.Get(requestBodyModelContextKey); ok {
 		model, _ := cached.(string)
 		return model
+	}
+	if !allowBody {
+		return ""
 	}
 	model := ""
 	if c.Request != nil && c.Request.Body != nil {
@@ -224,26 +248,44 @@ func requestBodyModel(c *gin.Context) string {
 // transformations change byte length; Go's HTTP server then uses chunked encoding.
 type maskingResponseWriter struct {
 	gin.ResponseWriter
+	ctx                   *gin.Context
 	set                   maskRuleSet
+	rulesResolved         bool
 	contentLengthStripped bool
+}
+
+// ruleSet resolves the replacement table once, on the first write, because the
+// response status decides whether the request body may be read (see
+// maskRuleSetForRequestStatus). Resolving eagerly would read the body of a
+// request that is about to be rejected, before auth has run.
+func (w *maskingResponseWriter) ruleSet(status int) maskRuleSet {
+	if w.rulesResolved {
+		return w.set
+	}
+	w.rulesResolved = true
+	w.set = maskRuleSetForRequestStatus(w.ctx, status)
+	return w.set
 }
 
 func (w *maskingResponseWriter) Write(data []byte) (int, error) {
 	// Strip Content-Length before the underlying writer emits headers implicitly.
 	w.stripContentLength()
-	return w.ResponseWriter.Write(w.set.mask(data))
+	set := w.ruleSet(w.Status())
+	return w.ResponseWriter.Write(set.mask(data))
 }
 
 func (w *maskingResponseWriter) WriteString(str string) (int, error) {
 	w.stripContentLength()
-	if !w.set.containsNeedleString(str) {
+	set := w.ruleSet(w.Status())
+	if !set.containsNeedleString(str) {
 		return w.ResponseWriter.WriteString(str)
 	}
-	return w.ResponseWriter.Write(w.set.mask([]byte(str)))
+	return w.ResponseWriter.Write(set.mask([]byte(str)))
 }
 
 func (w *maskingResponseWriter) WriteHeader(code int) {
 	w.stripContentLength()
+	w.ruleSet(code)
 	w.ResponseWriter.WriteHeader(code)
 }
 
@@ -272,7 +314,7 @@ func (s maskRuleSet) mask(b []byte) []byte {
 
 // maskProfileForRequest checks whether the incoming request targets a masked
 // model and returns the branding profile to apply.
-func maskProfileForRequest(c *gin.Context, hints maskRequestHints) (maskProfile, bool) {
+func maskProfileForRequest(c *gin.Context, hints maskRequestHints, allowBody bool) (maskProfile, bool) {
 	if c == nil || c.Request == nil {
 		return maskProfile{}, false
 	}
@@ -293,7 +335,7 @@ func maskProfileForRequest(c *gin.Context, hints maskRequestHints) (maskProfile,
 	}
 
 	// 3. JSON request body for `model` field
-	if profile, ok := profileForModel(requestBodyModel(c)); ok {
+	if profile, ok := profileForModel(requestBodyModelIfAllowed(c, allowBody)); ok {
 		return profile, true
 	}
 
@@ -331,7 +373,7 @@ func matchesGPT56Model(m string) bool {
 }
 
 // shouldMaskAntigravityRequest checks whether the incoming request is targeting a Gemini model.
-func shouldMaskAntigravityRequest(c *gin.Context, hints maskRequestHints) bool {
+func shouldMaskAntigravityRequest(c *gin.Context, hints maskRequestHints, allowBody bool) bool {
 	if c == nil || c.Request == nil {
 		return false
 	}
@@ -349,7 +391,7 @@ func shouldMaskAntigravityRequest(c *gin.Context, hints maskRequestHints) bool {
 	}
 
 	// 3. Check JSON request body for `model` field
-	if isGeminiModel(requestBodyModel(c)) {
+	if isGeminiModel(requestBodyModelIfAllowed(c, allowBody)) {
 		return true
 	}
 

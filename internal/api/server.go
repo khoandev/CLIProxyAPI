@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -280,12 +281,12 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 
 	// Create HTTP server
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Handler: engine,
+		Addr:    net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+		Handler: wrapUnconsumedRequestBodyHandler(engine),
 		// ReadHeaderTimeout bounds a slow or stalled header read without
 		// capping request bodies. WriteTimeout and ReadTimeout are deliberately
 		// left unset: they would kill long-lived SSE streams.
-		ReadHeaderTimeout: 30 * time.Second,
+		ReadHeaderTimeout: muxSniffDeadline,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}

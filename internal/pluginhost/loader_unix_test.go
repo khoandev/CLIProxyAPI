@@ -43,6 +43,9 @@ func buildReloadTestPlugin(t *testing.T, version int, outPath string) {
 }
 
 func TestUnixPluginReloadAfterShutdownUsesReplacedFile(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("skipping c-shared reload tests on darwin: multiple Go runtimes in the same process are unsupported on macOS")
+	}
 	dir := t.TempDir()
 	ext := ".so"
 	if runtime.GOOS == "darwin" {
@@ -165,6 +168,9 @@ func testShutdownCallCount(t *testing.T, client pluginClient) int {
 }
 
 func TestUnixPluginOpenFailureKeepsImageUsableOnRetry(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("skipping c-shared reload tests on darwin: multiple Go runtimes in the same process are unsupported on macOS")
+	}
 	dir := t.TempDir()
 	pluginPath := filepath.Join(dir, "failing"+testPluginLibraryExtension())
 	buildReloadTestPlugin(t, 3, pluginPath)

@@ -222,7 +222,7 @@ func applySummaryConfigForProvider(body []byte, format, model, provider string, 
 			"generation_config.thinking_config.include_thoughts",
 			"generation_config.thinking_config.includeThoughts",
 		} {
-			body, _ = sjson.DeleteBytes(body, path)
+			body, _ = util.DeleteJSONBytesIfExists(body, path)
 		}
 	case "antigravity":
 		body, _ = sjson.SetBytes(body, "request.generationConfig.thinkingConfig.includeThoughts", enabled)
@@ -231,7 +231,7 @@ func applySummaryConfigForProvider(body []byte, format, model, provider string, 
 			"request.generationConfig.thinking_config.include_thoughts",
 			"request.generationConfig.thinking_config.includeThoughts",
 		} {
-			body, _ = sjson.DeleteBytes(body, path)
+			body, _ = util.DeleteJSONBytesIfExists(body, path)
 		}
 	case "interactions":
 		// Google Interactions only accepts auto or none. OpenAI's concise and
@@ -250,8 +250,8 @@ func applySummaryConfigForProvider(body []byte, format, model, provider string, 
 		}
 		// Omitting the field is the documented way to disable summaries; an
 		// explicit null is not accepted by every Responses-compatible backend.
-		body, _ = sjson.DeleteBytes(body, "reasoning.summary")
-		body, _ = sjson.DeleteBytes(body, "reasoning.generate_summary")
+		body, _ = util.DeleteJSONBytesIfExists(body, "reasoning.summary")
+		body, _ = util.DeleteJSONBytesIfExists(body, "reasoning.generate_summary")
 		if reasoning := gjson.GetBytes(body, "reasoning"); reasoning.IsObject() && len(reasoning.Map()) == 0 {
 			body, _ = sjson.DeleteBytes(body, "reasoning")
 		}
@@ -488,7 +488,7 @@ func stripInferredClaudeSummaryActivation(body []byte, modelInfo *registry.Model
 		"thinking.display",
 		"output_config.effort",
 	} {
-		body, _ = sjson.DeleteBytes(body, path)
+		body, _ = util.DeleteJSONBytesIfExists(body, path)
 	}
 	for _, path := range []string{"thinking", "output_config"} {
 		if object := gjson.GetBytes(body, path); object.Exists() && object.IsObject() && len(object.Map()) == 0 {

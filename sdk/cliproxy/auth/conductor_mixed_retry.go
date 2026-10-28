@@ -419,16 +419,52 @@ func isRelayRateLimitError(err error) bool {
 // raw provider JSON body (which contains internal provider details) is never forwarded
 // to the client. The HTTP status 429 is intentionally preserved so callers can still
 // apply Retry-After handling.
+//
+// Wrapper layers that carry scheduling and header metadata (trustedRetryAfterError,
+// homeRetryRoundExhaustedError, streamBootstrapError, upstreamExecutionAttemptError)
+// are preserved so callers that inspect the error chain still observe trusted
+// Retry-After deadlines and bootstrap stream semantics.
 func sanitizeExhaustedRateLimitError(err error) error {
 	if !isRelayRateLimitError(err) {
 		return err
 	}
-	return &Error{
+	sanitized := error(&Error{
 		Code:       "rate_limit_exceeded",
 		Message:    "service is temporarily unavailable due to high demand; please retry later",
 		Retryable:  true,
 		HTTPStatus: http.StatusTooManyRequests,
+	})
+
+	// Re-wrap with the structural layers the original error carried so that
+	// trusted Retry-After deadlines, Home round scheduling and bootstrap
+	// stream semantics survive sanitization.
+
+	// streamBootstrapError: preserves bootstrap-failure-as-stream semantics.
+	var bootstrap *streamBootstrapError
+	if errors.As(err, &bootstrap) && bootstrap != nil {
+		sanitized = &streamBootstrapError{cause: sanitized, headers: cloneHTTPHeader(bootstrap.headers)}
 	}
+
+	// homeRetryRoundExhaustedError: preserves Home aggregate retry timing.
+	var exhausted *homeRetryRoundExhaustedError
+	if errors.As(err, &exhausted) && exhausted != nil {
+		rewrapped := *exhausted
+		rewrapped.cause = sanitized
+		sanitized = &rewrapped
+	}
+
+	// trustedRetryAfterError: preserves the locally computed cooldown deadline.
+	var trusted *trustedRetryAfterError
+	if errors.As(err, &trusted) && trusted != nil {
+		sanitized = &trustedRetryAfterError{cause: sanitized, deadline: trusted.deadline}
+	}
+
+	// upstreamExecutionAttemptError: preserves the upstream-attempt marker.
+	if hasUpstreamExecutionAttempt(err) {
+		sanitized = markUpstreamExecutionAttempt(sanitized)
+	}
+
+	return sanitized
 }
 
 // apiKeyPaymentExhaustedCooldown parks an API key credential effectively forever once
