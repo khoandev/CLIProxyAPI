@@ -572,7 +572,9 @@ func (e *GeminiVertexExecutor) executeWithServiceAccount(ctx context.Context, au
 		reporter.PublishFailureWithDetail(ctx, helps.ParseGeminiUsage(data), err)
 		return cliproxyexecutor.Response{}, err
 	}
-	reporter.Publish(ctx, helps.ParseGeminiUsage(data))
+	gemDetail := helps.ParseGeminiUsage(data)
+	helps.ApplyGeminiRequestImageConfig(&gemDetail, body)
+	reporter.Publish(ctx, gemDetail)
 	if responseFormat == sdktranslator.FormatOpenAIResponse {
 		out = helps.EnsureResponsesUsageDetails(out)
 	}
@@ -714,7 +716,9 @@ func (e *GeminiVertexExecutor) executeWithAPIKey(ctx context.Context, auth *clip
 		reporter.PublishFailureWithDetail(ctx, helps.ParseGeminiUsage(data), err)
 		return cliproxyexecutor.Response{}, err
 	}
-	reporter.Publish(ctx, helps.ParseGeminiUsage(data))
+	gemDetail := helps.ParseGeminiUsage(data)
+	helps.ApplyGeminiRequestImageConfig(&gemDetail, body)
+	reporter.Publish(ctx, gemDetail)
 	if responseFormat == sdktranslator.FormatOpenAIResponse {
 		out = helps.EnsureResponsesUsageDetails(out)
 	}
@@ -842,6 +846,7 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 		defer helps.ReleaseScanBuffer(scanBuf)
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var streamUsage helps.StreamUsageBuffer
+		streamUsage.SetRequestPayload(body)
 		defer streamUsage.Publish(ctx, reporter)
 		var streamErr error
 		defer func() {
@@ -859,9 +864,7 @@ func (e *GeminiVertexExecutor) executeStreamWithServiceAccount(ctx context.Conte
 			if !sawFinishReason && geminiStreamHasFinishSignal(rawPayload) {
 				sawFinishReason = true
 			}
-			if detail, ok := helps.ParseGeminiStreamUsage(line); ok {
-				streamUsage.Observe(detail, true)
-			}
+			streamUsage.ObserveGeminiStream(line)
 			if blockMsg, blocked := geminiPromptBlockErrorMessage(rawPayload); blocked {
 				blockErr := statusErr{code: http.StatusBadGateway, msg: blockMsg}
 				helps.RecordAPIResponseError(ctx, e.cfg, blockErr)
@@ -1065,6 +1068,7 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 		defer helps.ReleaseScanBuffer(scanBuf)
 		claudeInputTokens := helps.NewClaudeInputTokenState(from, to, responseFormat, originalPayload)
 		var streamUsage helps.StreamUsageBuffer
+		streamUsage.SetRequestPayload(body)
 		defer streamUsage.Publish(ctx, reporter)
 		var streamErr error
 		defer func() {
@@ -1082,9 +1086,7 @@ func (e *GeminiVertexExecutor) executeStreamWithAPIKey(ctx context.Context, auth
 			if !sawFinishReason && geminiStreamHasFinishSignal(rawPayload) {
 				sawFinishReason = true
 			}
-			if detail, ok := helps.ParseGeminiStreamUsage(line); ok {
-				streamUsage.Observe(detail, true)
-			}
+			streamUsage.ObserveGeminiStream(line)
 			if blockMsg, blocked := geminiPromptBlockErrorMessage(rawPayload); blocked {
 				blockErr := statusErr{code: http.StatusBadGateway, msg: blockMsg}
 				helps.RecordAPIResponseError(ctx, e.cfg, blockErr)
