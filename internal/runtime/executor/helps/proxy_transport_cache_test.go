@@ -11,6 +11,7 @@ import (
 // request forced a fresh TCP plus TLS handshake every time and left the
 // previous pool's idle connections behind.
 func TestCachedProxyTransportReusesPoolPerCredential(t *testing.T) {
+	t.Cleanup(ResetProxyTransports)
 	proxyURL := "http://127.0.0.1:1"
 	auth := &cliproxyauth.Auth{ID: "auth-reuse"}
 
@@ -29,6 +30,7 @@ func TestCachedProxyTransportReusesPoolPerCredential(t *testing.T) {
 // credential per process, so a shared connection would merge their wire
 // fingerprints.
 func TestCachedProxyTransportSeparatesCredentials(t *testing.T) {
+	t.Cleanup(ResetProxyTransports)
 	proxyURL := "http://127.0.0.1:1"
 
 	first := cachedProxyTransport(proxyURL, &cliproxyauth.Auth{ID: "auth-one"})
@@ -64,6 +66,7 @@ func TestProxyCredentialScopeIsStable(t *testing.T) {
 // TestProxyTransportCacheEvictsIdleConnections proves the cache closes the idle
 // connections of an evicted pool instead of leaking them.
 func TestProxyTransportCacheEvictsIdleConnections(t *testing.T) {
+	t.Cleanup(ResetProxyTransports)
 	proxyURL := "http://127.0.0.1:1"
 	auth := &cliproxyauth.Auth{ID: "auth-evict"}
 	transport := cachedProxyTransport(proxyURL, auth)

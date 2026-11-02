@@ -212,7 +212,10 @@ func RetireProxyPoolPublisher(publisher uint64) {
 }
 
 // ResetProxyTransports closes idle connections in cached explicit proxy transports.
-func ResetProxyTransports() { proxyTransportCache.Purge() }
+func ResetProxyTransports() {
+	proxyTransportCache.Purge()
+	explicitProxyTransportCache.Purge()
+}
 
 func pooledProxyTransport(proxyURL string, cfg *config.Config, auth *cliproxyauth.Auth) *http.Transport {
 	tr, pooled := pooledTransport(proxyPoolKindStandard, proxyURL, cfg, auth, func() (*http.Transport, error) {
