@@ -72,13 +72,13 @@ func TestProxyTransportCacheEvictsIdleConnections(t *testing.T) {
 	}
 
 	key := proxyTransportKey{proxy: proxyURL, credential: proxyCredentialScope(auth)}
-	if !proxyTransportCache.Contains(key) {
+	if !explicitProxyTransportCache.Contains(key) {
 		t.Fatal("expected the transport to be cached")
 	}
-	if !proxyTransportCache.CloseKey(key) {
+	if !explicitProxyTransportCache.CloseKey(key) {
 		t.Fatal("expected the cached transport to be closed")
 	}
-	if proxyTransportCache.Contains(key) {
+	if explicitProxyTransportCache.Contains(key) {
 		t.Fatal("expected the cached transport to be removed")
 	}
 }
