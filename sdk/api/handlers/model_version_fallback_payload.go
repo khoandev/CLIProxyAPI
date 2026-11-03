@@ -1,8 +1,9 @@
 package handlers
 
 import (
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"bytes"
+
+	"github.com/MoeForge/moego/ojson"
 )
 
 // withFallbackModelInPayload rewrites the "model" field so a retry targets the
@@ -11,10 +12,10 @@ func withFallbackModelInPayload(rawJSON []byte, fallbackModel string) []byte {
 	if len(rawJSON) == 0 {
 		return rawJSON
 	}
-	if !gjson.GetBytes(rawJSON, "model").Exists() {
+	if !ojson.GetBytesNoCopy(rawJSON, "model").Exists() {
 		return rawJSON
 	}
-	updated, err := sjson.SetBytes(rawJSON, "model", fallbackModel)
+	updated, err := ojson.SetBytes(rawJSON, "model", fallbackModel)
 	if err != nil {
 		return rawJSON
 	}
@@ -27,10 +28,10 @@ func restoreOriginalModelInBody(body []byte, originalModel string) []byte {
 	if len(body) == 0 || originalModel == "" {
 		return body
 	}
-	if !gjson.GetBytes(body, "model").Exists() {
+	if !ojson.GetBytesNoCopy(body, "model").Exists() {
 		return body
 	}
-	updated, err := sjson.SetBytes(body, "model", originalModel)
+	updated, err := ojson.SetBytes(body, "model", originalModel)
 	if err != nil {
 		return body
 	}
@@ -43,10 +44,34 @@ func restoreOriginalModelInChunk(chunk []byte, originalModel string) []byte {
 	if len(chunk) == 0 || originalModel == "" {
 		return chunk
 	}
-	if !gjson.GetBytes(chunk, "model").Exists() {
+	// Streaming chunks arrive framed as "data: <json>\n\n". The JSON editor
+	// treats the whole frame as a scalar, so rewrite only the JSON body and
+	// reattach the frame around it.
+	if bytes.HasPrefix(chunk, []byte("data:")) {
+		frameHead := chunk[:len("data:")]
+		rest := chunk[len("data:"):]
+		body := bytes.TrimLeft(rest, " \t")
+		frameLead := rest[:len(rest)-len(body)]
+		core := bytes.TrimRight(body, "\r\n")
+		frameTail := body[len(core):]
+		if !ojson.GetBytesNoCopy(core, "model").Exists() {
+			return chunk
+		}
+		updated, err := ojson.SetBytes(core, "model", originalModel)
+		if err != nil {
+			return chunk
+		}
+		out := make([]byte, 0, len(chunk)+len(updated)-len(core))
+		out = append(out, frameHead...)
+		out = append(out, frameLead...)
+		out = append(out, updated...)
+		out = append(out, frameTail...)
+		return out
+	}
+	if !ojson.GetBytesNoCopy(chunk, "model").Exists() {
 		return chunk
 	}
-	updated, err := sjson.SetBytes(chunk, "model", originalModel)
+	updated, err := ojson.SetBytes(chunk, "model", originalModel)
 	if err != nil {
 		return chunk
 	}

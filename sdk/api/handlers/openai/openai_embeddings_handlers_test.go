@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	"github.com/tidwall/gjson"
 )
 
 func performEmbeddingsEndpointRequest(t *testing.T, endpointPath string, contentType string, body io.Reader, handler gin.HandlerFunc) *httptest.ResponseRecorder {
@@ -40,12 +40,12 @@ func TestEmbeddingsRejectsEmptyModel(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", resp.Code, http.StatusBadRequest, resp.Body.String())
 	}
 
-	message := gjson.GetBytes(resp.Body.Bytes(), "error.message").String()
+	message := ojson.GetBytesNoCopy(resp.Body.Bytes(), "error.message").String()
 	expectedMessage := "Invalid request: model is required"
 	if message != expectedMessage {
 		t.Fatalf("error message = %q, want %q", message, expectedMessage)
 	}
-	if errorType := gjson.GetBytes(resp.Body.Bytes(), "error.type").String(); errorType != "invalid_request_error" {
+	if errorType := ojson.GetBytesNoCopy(resp.Body.Bytes(), "error.type").String(); errorType != "invalid_request_error" {
 		t.Fatalf("error type = %q, want invalid_request_error", errorType)
 	}
 }
@@ -61,7 +61,7 @@ func TestEmbeddingsRejectsWhitespaceOnlyModel(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", resp.Code, http.StatusBadRequest, resp.Body.String())
 	}
 
-	message := gjson.GetBytes(resp.Body.Bytes(), "error.message").String()
+	message := ojson.GetBytesNoCopy(resp.Body.Bytes(), "error.message").String()
 	expectedMessage := "Invalid request: model is required"
 	if message != expectedMessage {
 		t.Fatalf("error message = %q, want %q", message, expectedMessage)
@@ -79,7 +79,7 @@ func TestEmbeddingsRejectsInvalidJSON(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", resp.Code, http.StatusBadRequest, resp.Body.String())
 	}
 
-	if got := gjson.GetBytes(resp.Body.Bytes(), "error.type").String(); got != "invalid_request_error" {
+	if got := ojson.GetBytesNoCopy(resp.Body.Bytes(), "error.type").String(); got != "invalid_request_error" {
 		t.Fatalf("error type = %q, want invalid_request_error", got)
 	}
 }

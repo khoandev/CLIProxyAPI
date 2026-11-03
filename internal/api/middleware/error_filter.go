@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/errorfilter"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
-	"github.com/tidwall/gjson"
 )
 
 const (
@@ -269,8 +269,8 @@ func isProxyAPIErrorPath(path string) bool {
 
 // errorEnvelopeField reads a string field from an error envelope.
 func errorEnvelopeField(body []byte, path string) string {
-	value := gjson.GetBytes(body, path)
-	if value.Type != gjson.String {
+	value := ojson.GetBytesNoCopy(body, path)
+	if value.Type != ojson.String {
 		return ""
 	}
 	return value.String()

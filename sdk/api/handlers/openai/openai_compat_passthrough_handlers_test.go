@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	"github.com/tidwall/gjson"
 )
 
 type openAICompatPassthroughCaptureExecutor struct {
@@ -67,7 +67,7 @@ func TestSearchRequiresModel(t *testing.T) {
 	if resp.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d: %s", resp.Code, http.StatusBadRequest, resp.Body.String())
 	}
-	if got := gjson.GetBytes(resp.Body.Bytes(), "error.message").String(); !strings.Contains(got, "model is required") {
+	if got := ojson.GetBytesNoCopy(resp.Body.Bytes(), "error.message").String(); !strings.Contains(got, "model is required") {
 		t.Fatalf("error message = %q", got)
 	}
 }

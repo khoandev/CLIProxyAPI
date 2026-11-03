@@ -54,12 +54,16 @@ type ResponseWriterWrapper struct {
 	bodyTruncated       bool                       // bodyTruncated records that the captured body hit its byte cap.
 	isStreaming         bool                       // isStreaming indicates whether the response is a streaming type (e.g., text/event-stream).
 	streamWriter        logging.StreamingLogWriter // streamWriter is a writer for handling streaming log entries.
+	chunkChannel        chan []byte                // chunkChannel is a channel for asynchronously passing response chunks to the logger.
+	streamDone          chan struct{}              // streamDone signals when the streaming goroutine completes.
 	logger              logging.RequestLogger      // logger is the instance of the request logger service.
 	requestInfo         *RequestInfo               // requestInfo holds the details of the original request.
 	statusCode          int                        // statusCode stores the HTTP status code of the response.
 	headers             map[string][]string        // headers stores the response headers.
 	logOnErrorOnly      bool                       // logOnErrorOnly enables logging only when an error response is detected.
 	hijacked            bool                       // hijacked reports whether the underlying connection was hijacked.
+	panicked            bool                       // panicked records whether a handler panicked (even after committing a 2xx response).
+	finalized           bool                       // finalized prevents post-Finalize writes (e.g. outer recovery) from reopening stream writers.
 	firstChunkTimestamp time.Time                  // firstChunkTimestamp captures TTFB for streaming responses.
 	headersCaptured     bool                       // headersCaptured records that the response header snapshot has been taken.
 }
@@ -210,6 +214,12 @@ func (w *ResponseWriterWrapper) WriteString(data string) (int, error) {
 // It captures the status code, detects if the response is streaming based on the Content-Type header,
 // and initializes the appropriate logging mechanism (standard or streaming).
 func (w *ResponseWriterWrapper) WriteHeader(statusCode int) {
+	if w.ResponseWriter.Written() {
+		if statusCode >= http.StatusBadRequest && statusCode != clienterror.StatusClientClosedRequest {
+			w.panicked = true
+		}
+		return
+	}
 	w.statusCode = statusCode
 	w.closeConnectionIfRequestBodyUnconsumed(statusCode)
 
@@ -218,22 +228,33 @@ func (w *ResponseWriterWrapper) WriteHeader(statusCode int) {
 
 	// Detect streaming based on Content-Type
 	contentType := w.ResponseWriter.Header().Get("Content-Type")
-	w.isStreaming = w.detectStreaming(contentType)
+	w.isStreaming = w.detectStreaming(contentType) || w.streamWriter != nil
 
-	// If streaming, initialize streaming log writer
-	if w.isStreaming && w.logger.IsEnabled() {
-		streamWriter, err := w.logger.LogStreamingRequest(
-			w.requestInfo.URL,
-			w.requestInfo.Method,
-			w.requestInfo.Headers,
-			w.currentCapturedRequestBody(),
-			w.requestInfo.RequestID,
-		)
-		if err == nil {
-			w.streamWriter = streamWriter
+	// If streaming, initialize streaming log writer once and refresh uncommitted status updates.
+	if !w.finalized && w.isStreaming && w.logger != nil && w.logger.IsEnabled() {
+		if w.streamWriter == nil {
+			streamWriter, err := w.logger.LogStreamingRequest(
+				w.requestInfo.URL,
+				w.requestInfo.Method,
+				w.requestInfo.Headers,
+				w.currentCapturedRequestBody(),
+				w.requestInfo.RequestID,
+			)
+			if err == nil {
+				chunkChan := make(chan []byte, 100) // Buffered channel for async writes
+				doneChan := make(chan struct{})
+				w.streamWriter = streamWriter
+				w.chunkChannel = chunkChan
+				w.streamDone = doneChan
 
-			// Write status immediately
-			_ = streamWriter.WriteStatus(statusCode, w.headers)
+				// Start async chunk processor with captured locals so Finalize clearing fields cannot race.
+				go w.processStreamingChunks(doneChan, chunkChan, streamWriter)
+
+				// Write status immediately
+				_ = streamWriter.WriteStatus(statusCode, w.headers)
+			}
+		} else {
+			_ = w.streamWriter.WriteStatus(statusCode, w.headers)
 		}
 	}
 
@@ -332,11 +353,33 @@ func (w *ResponseWriterWrapper) currentCapturedRequestBody() []byte {
 	return w.requestInfo.Body
 }
 
+// processStreamingChunks runs in a separate goroutine to process response chunks from the chunkChannel.
+// It asynchronously writes each chunk to the streaming log writer.
+func (w *ResponseWriterWrapper) processStreamingChunks(done chan struct{}, chunkChan <-chan []byte, streamWriter logging.StreamingLogWriter) {
+	if done == nil {
+		return
+	}
+
+	defer close(done)
+
+	if streamWriter == nil || chunkChan == nil {
+		return
+	}
+
+	for chunk := range chunkChan {
+		streamWriter.WriteChunkAsync(chunk)
+	}
+}
+
 // Finalize completes the logging process for the request and response.
 // For streaming responses, it closes the stream writer.
 // For non-streaming responses, it logs the complete request and response details,
 // including any API-specific request/response data stored in the Gin context.
 func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
+	if w == nil || w.finalized {
+		return nil
+	}
+	w.finalized = true
 	if w.requestInfo != nil && w.requestInfo.deferredBodyCapture != nil {
 		defer w.requestInfo.deferredBodyCapture.Cleanup()
 	}
@@ -361,7 +404,7 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 		}
 	}
 
-	hasAPIError := hasActionableError(c, finalStatusCode, slicesAPIResponseError)
+	hasAPIError := w.panicked || hasActionableError(c, finalStatusCode, slicesAPIResponseError)
 	forceLog := w.logOnErrorOnly && hasAPIError && !w.logger.IsEnabled()
 	websocketTimelineSource := w.extractWebsocketTimelineSource(c)
 	apiRequestSource := w.extractAPIRequestSource(c)

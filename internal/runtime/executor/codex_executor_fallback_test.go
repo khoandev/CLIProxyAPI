@@ -3,8 +3,8 @@ package executor
 import (
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
-	"github.com/tidwall/gjson"
 )
 
 func TestCodexFallbackDisplayModel(t *testing.T) {
@@ -85,12 +85,12 @@ func TestRewriteCodexResponseModel(t *testing.T) {
 				}
 				return
 			}
-			modelVal := gjson.GetBytes(got, "model").String()
+			modelVal := ojson.GetBytesNoCopy(got, "model").String()
 			if modelVal != tt.wantModel {
 				t.Errorf("rewriteCodexResponseModel() model = %q, want %q", modelVal, tt.wantModel)
 			}
-			if gjson.GetBytes(tt.payload, "response.model").Exists() {
-				responseModelVal := gjson.GetBytes(got, "response.model").String()
+			if ojson.GetBytesNoCopy(tt.payload, "response.model").Exists() {
+				responseModelVal := ojson.GetBytesNoCopy(got, "response.model").String()
 				if responseModelVal != tt.wantModel {
 					t.Errorf("rewriteCodexResponseModel() response.model = %q, want %q", responseModelVal, tt.wantModel)
 				}

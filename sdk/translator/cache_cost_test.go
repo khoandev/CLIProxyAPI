@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/cachecost"
-	"github.com/tidwall/gjson"
 )
 
 func TestApplyCacheHitCostRatioNonStream(t *testing.T) {
@@ -46,7 +46,7 @@ func TestApplyCacheHitCostRatioNonStream(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := gjson.ParseBytes(applyCacheHitCostRatio([]byte(tc.body), tc.format))
+			got := ojson.ParseBytes(applyCacheHitCostRatio([]byte(tc.body), tc.format))
 			paths := cacheUsagePathsByFormat[tc.format]
 			if cached := got.Get(paths.cachePath).Int(); cached != tc.wantCache {
 				t.Fatalf("cache tokens = %d, want %d (body %s)", cached, tc.wantCache, got.Raw)
@@ -106,7 +106,7 @@ func TestTranslateNonStreamAppliesCacheHitCostRatio(t *testing.T) {
 		},
 	})
 
-	got := gjson.ParseBytes(registry.TranslateNonStream(context.Background(), FormatGemini, FormatOpenAI, "m", nil, nil, []byte(`{}`), nil))
+	got := ojson.ParseBytes(registry.TranslateNonStream(context.Background(), FormatGemini, FormatOpenAI, "m", nil, nil, []byte(`{}`), nil))
 	if cached := got.Get("usage.prompt_tokens_details.cached_tokens").Int(); cached != 45 {
 		t.Fatalf("cached tokens = %d, want 45", cached)
 	}
@@ -136,7 +136,7 @@ func TestTranslateStreamAppliesCacheHitCostRatio(t *testing.T) {
 	if string(chunks[0]) != `{"type":"content","text":"hi"}` {
 		t.Fatalf("non-usage chunk changed: %s", chunks[0])
 	}
-	if cached := gjson.GetBytes(chunks[1], "usage.prompt_tokens_details.cached_tokens").Int(); cached != 45 {
+	if cached := ojson.GetBytesNoCopy(chunks[1], "usage.prompt_tokens_details.cached_tokens").Int(); cached != 45 {
 		t.Fatalf("cached tokens = %d, want 45 (chunk %s)", cached, chunks[1])
 	}
 }

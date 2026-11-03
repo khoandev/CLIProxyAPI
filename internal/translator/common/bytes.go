@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 func GeminiTokenCountJSON(count int64) []byte {
@@ -36,33 +34,6 @@ func NewRawArrayItems(capacity int64) [][]byte {
 	return make([][]byte, 0, int(capacity))
 }
 
-// AppendRawJSONString merges one JSON value into an accumulated raw JSON string
-// and returns the merged bytes, quotes included.
-//
-// JSON string escaping works per character, so concatenating the escaped bodies
-// of two parts is identical to escaping their concatenation. Keeping the raw
-// bytes avoids unescaping and re-escaping a multi-megabyte payload, and the
-// first part is returned as is instead of being copied into a buffer.
-func AppendRawJSONString(acc []byte, value gjson.Result) []byte {
-	part := util.GJSONRawBytesNoCopy(value)
-	if value.Type != gjson.String || len(part) < 2 || part[0] != '"' || part[len(part)-1] != '"' {
-		// Non-string values, and any shape gjson did not hand back as a quoted
-		// literal, are escaped here so the caller always gets valid raw JSON.
-		escaped, err := json.Marshal(value.String())
-		if err != nil {
-			return acc
-		}
-		part = escaped
-	}
-	if len(acc) == 0 {
-		return part
-	}
-	merged := make([]byte, 0, len(acc)+len(part)-2)
-	merged = append(merged, acc[:len(acc)-1]...)
-	merged = append(merged, part[1:]...)
-	return merged
-}
-
 func JoinRawArray(items [][]byte) []byte {
 	if len(items) == 0 {
 		return []byte("[]")
@@ -83,33 +54,32 @@ func JoinRawArray(items [][]byte) []byte {
 }
 
 // SetRawArrayItems replaces an empty JSON array at path with raw items.
-// The items are spliced in place so the document is copied once, no matter how
-// many items there are. A document rewrite per item would copy the whole
-// payload again for each item.
+// The single-item path avoids allocating an intermediate joined array.
 func SetRawArrayItems(data []byte, path string, items [][]byte) []byte {
 	if len(items) == 0 {
 		return data
 	}
-	array := gjson.GetBytes(data, path)
-	if array.Raw == "[]" && array.Index >= 0 && array.Index+len(array.Raw) <= len(data) {
-		size := len(items) + 1
-		for _, item := range items {
-			size += len(item)
+	if len(items) == 1 {
+		array := ojson.GetBytesNoCopy(data, path)
+		if array.Raw == "[]" && array.Index >= 0 && array.Index+len(array.Raw) <= len(data) {
+			out := make([]byte, 0, len(data)+len(items[0]))
+			out = append(out, data[:array.Index]...)
+			out = append(out, '[')
+			out = append(out, items[0]...)
+			out = append(out, ']')
+			return append(out, data[array.Index+len(array.Raw):]...)
 		}
-		out := make([]byte, 0, len(data)+size)
-		out = append(out, data[:array.Index]...)
-		out = append(out, '[')
-		for i, item := range items {
-			if i > 0 {
-				out = append(out, ',')
-			}
-			out = append(out, item...)
-		}
-		out = append(out, ']')
-		return append(out, data[array.Index+len(array.Raw):]...)
 	}
-	data, _ = sjson.SetRawBytes(data, path, JoinRawArray(items))
+	data, _ = ojson.SetRawBytes(data, path, JoinRawArray(items))
 	return data
+}
+
+// SetRawArrayItemsDoc replaces a JSON array at path in doc with raw items.
+func SetRawArrayItemsDoc(doc *ojson.Doc, path string, items [][]byte) {
+	if doc == nil || len(items) == 0 {
+		return
+	}
+	_ = doc.SetRawBytes(path, JoinRawArray(items))
 }
 
 // SSEEventData builds one complete SSE frame. Each frame carries its own
@@ -149,7 +119,7 @@ func AppendSSEEventBytes(out []byte, event string, payload []byte, trailingNewli
 }
 
 // SetStringWithoutHTMLEscape sets a string field in a JSON payload without escaping
-// HTML characters (<, >, &). Standard sjson.Set/SetBytes delegates string values
+// HTML characters (<, >, &). Standard ojson.Set/SetBytes delegates string values
 // containing quotes or special characters to encoding/json.Marshal, which unconditionally
 // escapes <, >, & to \u003c, \u003e, \u0026.
 func SetStringWithoutHTMLEscape(data []byte, path, value string) ([]byte, error) {
@@ -157,8 +127,24 @@ func SetStringWithoutHTMLEscape(data []byte, path, value string) ([]byte, error)
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	if errEncode := enc.Encode(value); errEncode != nil {
-		return sjson.SetBytes(data, path, value)
+		return ojson.SetBytes(data, path, value)
 	}
 	raw := bytes.TrimRight(buf.Bytes(), "\n")
-	return sjson.SetRawBytes(data, path, raw)
+	return ojson.SetRawBytes(data, path, raw)
+}
+
+// SetStringWithoutHTMLEscapeDoc sets a string field in an ojson.Doc without escaping
+// HTML characters (<, >, &).
+func SetStringWithoutHTMLEscapeDoc(doc *ojson.Doc, path, value string) error {
+	if doc == nil {
+		return nil
+	}
+	buf := &bytes.Buffer{}
+	enc := json.NewEncoder(buf)
+	enc.SetEscapeHTML(false)
+	if errEncode := enc.Encode(value); errEncode != nil {
+		return doc.Set(path, value)
+	}
+	raw := bytes.TrimRight(buf.Bytes(), "\n")
+	return doc.SetRawBytes(path, raw)
 }

@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
-	"github.com/tidwall/gjson"
 )
 
 // Embeddings handles the OpenAI Embeddings API endpoint.
@@ -40,7 +40,7 @@ func (h *OpenAIAPIHandler) Embeddings(c *gin.Context) {
 	}
 
 	// Extract model name from the request
-	modelName := strings.TrimSpace(gjson.GetBytes(rawJSON, "model").String())
+	modelName := strings.TrimSpace(strings.Clone(ojson.GetBytesNoCopy(rawJSON, "model").String()))
 	if modelName == "" {
 		c.JSON(http.StatusBadRequest, handlers.ErrorResponse{
 			Error: handlers.ErrorDetail{

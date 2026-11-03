@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func TestParseRetryDelay_RateLimitedUntil(t *testing.T) {
@@ -178,10 +178,10 @@ func TestOpenAICompatExecutorColonEffortUsesSupportedReasoning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute error: %v", err)
 	}
-	if got := gjson.GetBytes(gotBody, "model").String(); got != model {
+	if got := ojson.GetBytesNoCopy(gotBody, "model").String(); got != model {
 		t.Fatalf("model = %q, want %q; body=%s", got, model, string(gotBody))
 	}
-	if got := gjson.GetBytes(gotBody, "reasoning_effort").String(); got != "xhigh" {
+	if got := ojson.GetBytesNoCopy(gotBody, "reasoning_effort").String(); got != "xhigh" {
 		t.Fatalf("reasoning_effort = %q, want xhigh; body=%s", got, string(gotBody))
 	}
 }
@@ -218,10 +218,10 @@ func TestOpenAICompatExecutorUnsupportedColonEffortRemainsModelID(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Execute error: %v", err)
 	}
-	if got := gjson.GetBytes(gotBody, "model").String(); got != requested {
+	if got := ojson.GetBytesNoCopy(gotBody, "model").String(); got != requested {
 		t.Fatalf("model = %q, want %q; body=%s", got, requested, string(gotBody))
 	}
-	if gjson.GetBytes(gotBody, "reasoning_effort").Exists() {
+	if ojson.GetBytesNoCopy(gotBody, "reasoning_effort").Exists() {
 		t.Fatalf("reasoning_effort unexpectedly set; body=%s", string(gotBody))
 	}
 }

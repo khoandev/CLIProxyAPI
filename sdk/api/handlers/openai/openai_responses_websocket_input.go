@@ -13,11 +13,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
-	"github.com/tidwall/gjson"
 )
 
 // responsesLocalInterrupt cancels an in-flight HTTP turn. A websocket upstream
@@ -202,14 +202,14 @@ func readResponsesWebsocketInput(ctx context.Context, cancel context.CancelCause
 			}
 			// Control frames bypass response.create normalization. The original
 			// response_id, mode, and extension fields must reach upstream unchanged.
-			if json.Valid(payload) && gjson.GetBytes(payload, "type").String() == "response.interrupt" {
+			if json.Valid(payload) && ojson.GetBytesNoCopy(payload, "type").String() == "response.interrupt" {
 				appendResponsesInterruptDiagnostic(timeline, payload, "")
 				// The client can only learn a response id from an event this
 				// proxy forwarded, so an interrupt naming any other id is
 				// invalid. Reject it here instead of relying on upstream
 				// attachment: otherwise the same frame is forwarded to a live
 				// upstream or acknowledged locally, depending on turn timing.
-				if !local.knows(gjson.GetBytes(payload, "response_id").String()) {
+				if !local.knows(ojson.GetBytesNoCopy(payload, "response_id").String()) {
 					appendResponsesInterruptDiagnostic(timeline, payload, "rejected")
 					_, errWrite := writeResponsesWebsocketError(writer, nil, &interfaces.ErrorMessage{
 						StatusCode: http.StatusBadRequest,
@@ -261,7 +261,7 @@ func appendResponsesInterruptDiagnostic(timeline websocketTimelineAppender, payl
 	}
 	// Hash client-controlled IDs and omit all arbitrary fields, including mode.
 	// Only correlation metadata is needed to diagnose control-frame timing.
-	idHash := sha256.Sum256([]byte(gjson.GetBytes(payload, "response_id").String()))
+	idHash := sha256.Sum256([]byte(ojson.GetBytesNoCopy(payload, "response_id").String()))
 	diagnostic := struct {
 		Type           string `json:"type"`
 		ResponseIDHash string `json:"response_id_hash"`
@@ -279,8 +279,8 @@ func appendResponsesInterruptDiagnostic(timeline websocketTimelineAppender, payl
 }
 
 func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocketInterrupt(ctx context.Context, sessionID string, payload []byte) error {
-	responseID := gjson.GetBytes(payload, "response_id")
-	if responseID.Type != gjson.String || strings.TrimSpace(responseID.String()) == "" {
+	responseID := ojson.GetBytesNoCopy(payload, "response_id")
+	if responseID.Type != ojson.String || strings.TrimSpace(responseID.String()) == "" {
 		return fmt.Errorf("response.interrupt requires response_id")
 	}
 	if h == nil || h.AuthManager == nil {

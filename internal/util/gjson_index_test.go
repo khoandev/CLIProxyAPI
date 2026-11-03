@@ -3,7 +3,7 @@ package util
 import (
 	"testing"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // TestJSONIndexMatchesGJSON proves the index resolves the same values as a
@@ -58,7 +58,7 @@ func TestJSONIndexMatchesGJSON(t *testing.T) {
 	for _, body := range bodies {
 		index := NewJSONIndex([]byte(body))
 		for _, path := range paths {
-			want := gjson.GetBytes([]byte(body), path)
+			want := ojson.GetBytesNoCopy([]byte(body), path)
 			got := index.Get(path)
 			if got.Type != want.Type {
 				t.Fatalf("body=%s path=%q type = %v, want %v", body, path, got.Type, want.Type)

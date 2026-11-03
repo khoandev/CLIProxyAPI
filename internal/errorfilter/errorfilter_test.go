@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 func TestContainsCJK(t *testing.T) {
@@ -112,25 +112,25 @@ func TestSanitizeJSONErrorBody(t *testing.T) {
 				return
 			}
 			if tc.body == `{"error":"请求失败"}` {
-				if got := gjson.GetBytes(out, "error").String(); got != GenericErrorMessage {
+				if got := ojson.GetBytesNoCopy(out, "error").String(); got != GenericErrorMessage {
 					t.Fatalf("error = %q, want %q", got, GenericErrorMessage)
 				}
 				return
 			}
 			path := "error"
-			if gjson.GetBytes(out, "response.error").IsObject() {
+			if ojson.GetBytesNoCopy(out, "response.error").IsObject() {
 				path = "response.error"
 			}
-			if got := gjson.GetBytes(out, path+".message").String(); got != tc.wantMessage {
+			if got := ojson.GetBytesNoCopy(out, path+".message").String(); got != tc.wantMessage {
 				t.Fatalf("message = %q, want %q", got, tc.wantMessage)
 			}
 			if tc.wantType != "" {
-				if got := gjson.GetBytes(out, path+".type").String(); got != tc.wantType {
+				if got := ojson.GetBytesNoCopy(out, path+".type").String(); got != tc.wantType {
 					t.Fatalf("type = %q, want %q", got, tc.wantType)
 				}
 			}
 			if tc.wantCode != "" {
-				if got := gjson.GetBytes(out, path+".code").String(); got != tc.wantCode {
+				if got := ojson.GetBytesNoCopy(out, path+".code").String(); got != tc.wantCode {
 					t.Fatalf("code = %q, want %q", got, tc.wantCode)
 				}
 			}
@@ -166,10 +166,10 @@ func TestSanitizeErrorBody(t *testing.T) {
 	}
 	envelope := `{"error":{"message":"配额不足","type":"insufficient_quota"}}`
 	out := SanitizeErrorBody([]byte(envelope))
-	if got := gjson.GetBytes(out, "error.message").String(); got != GenericErrorMessage {
+	if got := ojson.GetBytesNoCopy(out, "error.message").String(); got != GenericErrorMessage {
 		t.Fatalf("envelope message = %q, want %q", got, GenericErrorMessage)
 	}
-	if got := gjson.GetBytes(out, "error.type").String(); got != "insufficient_quota" {
+	if got := ojson.GetBytesNoCopy(out, "error.type").String(); got != "insufficient_quota" {
 		t.Fatalf("envelope type = %q, want preserved", got)
 	}
 	ascii := []byte(`{"error":{"message":"rate limited"}}`)
@@ -193,13 +193,13 @@ func TestBuildGenericErrorBody(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			out := BuildGenericErrorBody(tc.typ, tc.code)
-			if got := gjson.GetBytes(out, "error.message").String(); got != GenericErrorMessage {
+			if got := ojson.GetBytesNoCopy(out, "error.message").String(); got != GenericErrorMessage {
 				t.Fatalf("message = %q, want %q", got, GenericErrorMessage)
 			}
-			if got := gjson.GetBytes(out, "error.type").String(); got != tc.wantType {
+			if got := ojson.GetBytesNoCopy(out, "error.type").String(); got != tc.wantType {
 				t.Fatalf("type = %q, want %q", got, tc.wantType)
 			}
-			if got := gjson.GetBytes(out, "error.code").String(); got != tc.wantCode {
+			if got := ojson.GetBytesNoCopy(out, "error.code").String(); got != tc.wantCode {
 				t.Fatalf("code = %q, want %q", got, tc.wantCode)
 			}
 		})

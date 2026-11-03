@@ -2,8 +2,10 @@
 package thinking
 
 import (
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"strings"
+
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
 )
 
 // StripThinkingConfig removes thinking configuration fields from request body.
@@ -23,16 +25,42 @@ import (
 //   - provider is unknown
 //   - no thinking configuration found
 func StripThinkingConfig(body []byte, provider string) []byte {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+	if len(body) == 0 || !ojson.ValidBytes(body) {
 		return body
 	}
+	doc := ojson.NewDoc(body)
+	if !stripThinkingFieldsDoc(doc, provider) {
+		return body
+	}
+	return doc.Bytes()
+}
+
+// StripThinkingFieldsDoc removes thinking configuration fields from doc in place.
+func StripThinkingFieldsDoc(doc *ojson.Doc, format string, keepTopLevelEffort ...bool) {
+	_ = stripThinkingFieldsDoc(doc, format, keepTopLevelEffort...)
+}
+
+func stripThinkingFieldsDoc(doc *ojson.Doc, format string, keepTopLevelEffort ...bool) bool {
+	if doc == nil {
+		return false
+	}
+	provider := strings.ToLower(strings.TrimSpace(format))
+	if provider == "openai-response" {
+		provider = "codex"
+	}
+	keepEffort := len(keepTopLevelEffort) > 0 && keepTopLevelEffort[0]
 
 	var paths []string
 	switch provider {
 	case "claude":
-		// Native: thinking + output_config.effort. Also strip alien OpenAI/Codex/Gemini fields
-		// to avoid {"detail":"Unsupported parameter: reasoning_effort"} on cross-provider passthrough.
-		paths = []string{"thinking", "output_config.effort", "reasoning_effort", "reasoning", "reasoning.effort", "generationConfig.thinkingConfig", "request.generationConfig.thinkingConfig"}
+		// Native: thinking + output_config.effort. Also strip alien OpenAI/Codex/Gemini
+		// fields to avoid {"detail":"Unsupported parameter: reasoning_effort"} on
+		// cross-provider passthrough.
+		if keepEffort {
+			paths = []string{"thinking", "reasoning_effort", "reasoning", "reasoning.effort", "generationConfig.thinkingConfig", "request.generationConfig.thinkingConfig"}
+		} else {
+			paths = []string{"thinking", "output_config.effort", "reasoning_effort", "reasoning", "reasoning.effort", "generationConfig.thinkingConfig", "request.generationConfig.thinkingConfig"}
+		}
 	case "gemini":
 		paths = []string{"generationConfig.thinkingConfig", "reasoning_effort", "reasoning", "reasoning.effort", "thinking", "output_config.effort", "request.generationConfig.thinkingConfig"}
 	case "antigravity":
@@ -53,40 +81,67 @@ func StripThinkingConfig(body []byte, provider string) []byte {
 			"thinking",
 		}
 	case "openai":
-		paths = []string{"reasoning_effort", "reasoning"}
-	case "kimi", "kimi-ai", "kimi.ai", "kimi.com":
-		paths = []string{
-			"reasoning_effort",
-			"thinking",
-			"reasoning",
-			"reasoning.effort",
-			"output_config.effort",
-			"generationConfig.thinkingConfig",
-			"request.generationConfig.thinkingConfig",
+		if keepEffort {
+			paths = []string{"reasoning"}
+		} else {
+			paths = []string{"reasoning_effort", "reasoning"}
 		}
-	case "codex", "xai", "openai-response", "openai-responses", "responses":
+	case "kimi", "kimi-ai", "kimi.ai", "kimi.com":
+		if keepEffort {
+			paths = []string{
+				"thinking",
+				"reasoning",
+				"reasoning.effort",
+				"output_config.effort",
+				"generationConfig.thinkingConfig",
+				"request.generationConfig.thinkingConfig",
+			}
+		} else {
+			paths = []string{
+				"reasoning_effort",
+				"thinking",
+				"reasoning",
+				"reasoning.effort",
+				"output_config.effort",
+				"generationConfig.thinkingConfig",
+				"request.generationConfig.thinkingConfig",
+			}
+		}
+	case "codex", "xai", "openai-responses", "responses":
 		// Codex native is reasoning.effort (object). Strip flat reasoning_effort alias that
 		// upstream rejects with {"detail":"Unsupported parameter: reasoning_effort"}.
-		paths = []string{"reasoning", "reasoning.effort", "reasoning_effort", "thinking", "output_config.effort", "generationConfig.thinkingConfig", "request.generationConfig.thinkingConfig"}
+		if keepEffort {
+			paths = []string{"thinking", "output_config.effort", "generationConfig.thinkingConfig", "request.generationConfig.thinkingConfig"}
+		} else {
+			paths = []string{"reasoning", "reasoning.effort", "reasoning_effort", "thinking", "output_config.effort", "generationConfig.thinkingConfig", "request.generationConfig.thinkingConfig"}
+		}
 	default:
-		return body
+		return false
 	}
 
-	result := body
+	modified := false
 	for _, path := range paths {
-		result, _ = sjson.DeleteBytes(result, path)
+		if doc.Get(path).Exists() {
+			if doc.Delete(path) == nil {
+				modified = true
+			}
+		}
 	}
 
 	// If reasoning.effort was deleted and reasoning object is now empty, clean it up.
-	if r := gjson.GetBytes(result, "reasoning"); r.Exists() && r.IsObject() && len(r.Map()) == 0 {
-		result, _ = sjson.DeleteBytes(result, "reasoning")
+	if r := doc.Get("reasoning"); r.Exists() && r.IsObject() && len(r.Map()) == 0 {
+		if util.DeleteJSONDocIfExists(doc, "reasoning") == nil {
+			modified = true
+		}
 	}
 
 	// Avoid leaving an empty output_config object for Claude when effort was the only field.
-	if provider == "claude" {
-		if oc := gjson.GetBytes(result, "output_config"); oc.Exists() && oc.IsObject() && len(oc.Map()) == 0 {
-			result, _ = sjson.DeleteBytes(result, "output_config")
+	if provider == "claude" && !keepEffort {
+		if oc := doc.Get("output_config"); oc.Exists() && oc.IsObject() && len(oc.Map()) == 0 {
+			if util.DeleteJSONDocIfExists(doc, "output_config") == nil {
+				modified = true
+			}
 		}
 	}
-	return result
+	return modified
 }

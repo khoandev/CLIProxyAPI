@@ -3,9 +3,8 @@ package translator
 import (
 	"bytes"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/cachecost"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 // cacheUsagePaths maps a client format to the usage JSON paths describing its
@@ -62,8 +61,8 @@ func applyCacheHitCostRatioToStream(chunks [][]byte, to Format) [][]byte {
 // redistributeCacheTokensInPayload rewrites a single JSON object, leaving the
 // surrounding SSE framing untouched.
 func redistributeCacheTokensInPayload(body []byte, paths cacheUsagePaths, ratio float64) []byte {
-	input := gjson.GetBytes(body, paths.inputPath)
-	cached := gjson.GetBytes(body, paths.cachePath)
+	input := ojson.GetBytesNoCopy(body, paths.inputPath)
+	cached := ojson.GetBytesNoCopy(body, paths.cachePath)
 	if !cached.Exists() || !input.Exists() || cached.Int() <= 0 || input.Int() <= 0 {
 		return body
 	}
@@ -71,7 +70,7 @@ func redistributeCacheTokensInPayload(body []byte, paths cacheUsagePaths, ratio 
 	if newCached == cached.Int() {
 		return body
 	}
-	updated, err := sjson.SetBytes(body, paths.cachePath, newCached)
+	updated, err := ojson.SetBytes(body, paths.cachePath, newCached)
 	if err != nil {
 		return body
 	}

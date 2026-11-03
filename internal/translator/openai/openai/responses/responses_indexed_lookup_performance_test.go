@@ -3,8 +3,8 @@ package responses
 import (
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
-	"github.com/tidwall/gjson"
 )
 
 // TestResponsesRequestIndexedLookupDoesNotRescanPayload proves the indexed
@@ -30,7 +30,7 @@ func TestResponsesRequestIndexedLookupDoesNotRescanPayload(t *testing.T) {
 
 	plain := testing.Benchmark(func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			root := gjson.ParseBytes(request)
+			root := ojson.ParseBytes(request)
 			for _, path := range lookupPaths {
 				if root.Get(path).Exists() {
 					b.Fatalf("unexpected %s", path)

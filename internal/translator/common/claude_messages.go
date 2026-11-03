@@ -1,9 +1,10 @@
 package common
 
 import (
+	"strings"
+
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 // ClaudeMessageAccumulator groups consecutive Claude messages by role.
@@ -38,9 +39,9 @@ func (a *ClaudeMessageAccumulator) Append(message []byte) {
 	if a.role != "" && a.role != role {
 		a.Flush()
 	}
-	a.role = role
+	a.role = strings.Clone(role)
 	for _, part := range parts {
-		if role == "assistant" && gjson.GetBytes(part, "type").String() == "tool_use" {
+		if role == "assistant" && ojson.GetBytesNoCopy(part, "type").String() == "tool_use" {
 			a.toolUseParts = append(a.toolUseParts, part)
 			continue
 		}
@@ -61,12 +62,10 @@ func (a *ClaudeMessageAccumulator) Flush() {
 		parts = combined
 	}
 	if len(parts) > 0 {
-		message := []byte(`{"role":"","content":[]}`)
-		message, _ = sjson.SetBytes(message, "role", a.role)
-		// The items are spliced into the empty array, so the content is copied
-		// once instead of being joined and then written into the message.
-		message = SetRawArrayItems(message, "content", parts)
-		a.messages = append(a.messages, message)
+		messageDoc := ojson.NewDoc([]byte(`{"role":"","content":[]}`))
+		_ = messageDoc.Set("role", a.role)
+		_ = messageDoc.SetRawBytes("content", JoinRawArray(parts))
+		a.messages = append(a.messages, messageDoc.Bytes())
 	}
 	a.role = ""
 	a.content = nil
@@ -80,79 +79,70 @@ func (a *ClaudeMessageAccumulator) Messages() [][]byte {
 }
 
 // AlignClaudeToolResults orders tool_result blocks by the preceding tool_use IDs,
-// preserving non-result content blocks at their existing indexes. It returns nil
-// when the content needs no reordering, so callers keep the original
-// gjson.Result and pay no copy at all.
-func AlignClaudeToolResults(content gjson.Result, toolUseIDs []string) []byte {
+// preserving non-result content blocks at their existing indexes. If a complete
+// one-to-one match is unavailable, the original content is returned.
+func AlignClaudeToolResults(content ojson.Result, toolUseIDs []string) ojson.Result {
 	if !content.IsArray() || len(toolUseIDs) == 0 {
-		return nil
+		return content
 	}
 
 	parts := content.Array()
+	toolResults := make([]ojson.Result, 0, len(toolUseIDs))
 	toolResultIndices := make([]int, 0, len(toolUseIDs))
 	for i, part := range parts {
 		if part.Get("type").String() == "tool_result" {
+			toolResults = append(toolResults, part)
 			toolResultIndices = append(toolResultIndices, i)
 		}
 	}
-	if len(toolResultIndices) != len(toolUseIDs) {
-		return nil
+	if len(toolResults) != len(toolUseIDs) {
+		return content
 	}
 
-	// ordered maps each output slot to the index of the part it receives.
-	ordered := make([]int, len(parts))
-	for i := range ordered {
-		ordered[i] = i
-	}
-	used := make([]bool, len(toolResultIndices))
-	for i, toolUseID := range toolUseIDs {
+	reorderedResults := make([]ojson.Result, 0, len(toolUseIDs))
+	used := make([]bool, len(toolResults))
+	for _, toolUseID := range toolUseIDs {
 		matched := -1
-		for resultIndex, partIndex := range toolResultIndices {
-			if !used[resultIndex] && toolUseID != "" && parts[partIndex].Get("tool_use_id").String() == toolUseID {
+		for resultIndex, toolResult := range toolResults {
+			if !used[resultIndex] && toolUseID != "" && toolResult.Get("tool_use_id").String() == toolUseID {
 				matched = resultIndex
 				break
 			}
 		}
 		if matched < 0 {
-			return nil
+			return content
 		}
 		used[matched] = true
-		ordered[toolResultIndices[i]] = toolResultIndices[matched]
+		reorderedResults = append(reorderedResults, toolResults[matched])
 	}
 
-	size := len(parts) + 1
-	for _, part := range parts {
-		size += len(part.Raw)
+	ordered := make([][]byte, len(parts))
+	for i, part := range parts {
+		ordered[i] = []byte(part.Raw)
 	}
-	out := make([]byte, 0, size)
-	out = append(out, '[')
-	for i, partIndex := range ordered {
-		if i > 0 {
-			out = append(out, ',')
-		}
-		out = append(out, parts[partIndex].Raw...)
+	for i, slotIndex := range toolResultIndices {
+		ordered[slotIndex] = []byte(reorderedResults[i].Raw)
 	}
-	out = append(out, ']')
-	return out
+	return util.ParseGJSONBytesNoCopy(JoinRawArray(ordered))
 }
 
-func claudeMessageContentParts(content gjson.Result) [][]byte {
-	if !content.Exists() || content.Type == gjson.Null {
+func claudeMessageContentParts(content ojson.Result) [][]byte {
+	if !content.Exists() || content.Type == ojson.Null {
 		return nil
 	}
-	if content.Type == gjson.String {
+	if content.Type == ojson.String {
 		if content.String() == "" {
 			return nil
 		}
 		part := []byte(`{"type":"text","text":""}`)
-		part, _ = sjson.SetBytes(part, "text", content.String())
+		part, _ = ojson.SetBytes(part, "text", content.String())
 		return [][]byte{part}
 	}
 	if !content.IsArray() {
 		return nil
 	}
 	parts := make([][]byte, 0, len(content.Array()))
-	content.ForEach(func(_, part gjson.Result) bool {
+	content.ForEach(func(_, part ojson.Result) bool {
 		if part.IsObject() {
 			parts = append(parts, []byte(part.Raw))
 		}

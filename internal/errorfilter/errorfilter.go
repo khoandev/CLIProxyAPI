@@ -11,8 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // GenericErrorMessage is the only message the proxy returns for an error whose
@@ -81,8 +80,8 @@ func IsJSONErrorBody(body []byte) bool {
 	if !json.Valid(body) {
 		return false
 	}
-	errValue := gjson.GetBytes(body, "error")
-	return errValue.Exists() && errValue.Type != gjson.Null
+	errValue := ojson.GetBytesNoCopy(body, "error")
+	return errValue.Exists() && errValue.Type != ojson.Null
 }
 
 func firstNonSpaceByte(body []byte) int {
@@ -102,7 +101,7 @@ func firstNonSpaceByte(body []byte) int {
 //
 // The sjson writes here must keep their default allocating behavior: callers pass
 // buffers that other readers may still alias, so an in-place rewrite would corrupt
-// every gjson.Result already derived from those bytes (see
+// every ojson.Result already derived from those bytes (see
 // util.TestNoInPlaceSJSONWrites). This path only runs for bodies that carry CJK.
 func SanitizeJSONErrorBody(body []byte) ([]byte, bool) {
 	if !containsCJKBytes(body) {
@@ -113,24 +112,24 @@ func SanitizeJSONErrorBody(body []byte) ([]byte, bool) {
 	asciiCode := asciiEnvelopeField(body, "error.code")
 
 	out := body
-	errValue := gjson.GetBytes(body, "error")
+	errValue := ojson.GetBytesNoCopy(body, "error")
 	switch {
-	case errValue.Type == gjson.String:
+	case errValue.Type == ojson.String:
 		if ContainsCJK(errValue.String()) {
-			if updated, errSet := sjson.SetBytes(out, "error", GenericErrorMessage); errSet == nil {
+			if updated, errSet := ojson.SetBytes(out, "error", GenericErrorMessage); errSet == nil {
 				out = updated
 			}
 		}
 	case errValue.IsObject():
 		out, _ = sanitizeErrorObject(out, "error")
 	}
-	if nested := gjson.GetBytes(body, "response.error"); nested.IsObject() {
+	if nested := ojson.GetBytesNoCopy(body, "response.error"); nested.IsObject() {
 		out, _ = sanitizeErrorObject(out, "response.error")
 	}
 	if !errValue.Exists() {
 		// Some gateways report the failure as a bare top-level message.
-		if msg := gjson.GetBytes(out, "message"); msg.Type == gjson.String && ContainsCJK(msg.String()) {
-			if updated, errSet := sjson.SetBytes(out, "message", GenericErrorMessage); errSet == nil {
+		if msg := ojson.GetBytesNoCopy(out, "message"); msg.Type == ojson.String && ContainsCJK(msg.String()) {
+			if updated, errSet := ojson.SetBytes(out, "message", GenericErrorMessage); errSet == nil {
 				out = updated
 			}
 		}
@@ -157,11 +156,11 @@ func sanitizeErrorObject(body []byte, path string) ([]byte, bool) {
 		{name: "type", value: defaultErrorType},
 	} {
 		key := path + "." + field.name
-		value := gjson.GetBytes(out, key)
-		if value.Type != gjson.String || !ContainsCJK(value.String()) {
+		value := ojson.GetBytesNoCopy(out, key)
+		if value.Type != ojson.String || !ContainsCJK(value.String()) {
 			continue
 		}
-		if updated, errSet := sjson.SetBytes(out, key, field.value); errSet == nil {
+		if updated, errSet := ojson.SetBytes(out, key, field.value); errSet == nil {
 			out = updated
 		}
 		changed = true
@@ -172,8 +171,8 @@ func sanitizeErrorObject(body []byte, path string) ([]byte, bool) {
 // asciiEnvelopeField returns the string value at path when it is non-empty and
 // free of CJK, otherwise "".
 func asciiEnvelopeField(body []byte, path string) string {
-	value := gjson.GetBytes(body, path)
-	if value.Type != gjson.String {
+	value := ojson.GetBytesNoCopy(body, path)
+	if value.Type != ojson.String {
 		return ""
 	}
 	text := value.String()

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/errorfilter"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
-	"github.com/tidwall/gjson"
 )
 
 // errorFilterTestRouter mounts the error filter inside a capture middleware so a
@@ -56,13 +56,13 @@ func TestErrorFilterMiddlewarePromotesCJKErrorEnvelope(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)
 	}
 	body := recorder.Body.Bytes()
-	if got := gjson.GetBytes(body, "error.message").String(); got != errorfilter.GenericErrorMessage {
+	if got := ojson.GetBytesNoCopy(body, "error.message").String(); got != errorfilter.GenericErrorMessage {
 		t.Fatalf("message = %q, want %q", got, errorfilter.GenericErrorMessage)
 	}
-	if got := gjson.GetBytes(body, "error.type").String(); got != "insufficient_quota" {
+	if got := ojson.GetBytesNoCopy(body, "error.type").String(); got != "insufficient_quota" {
 		t.Fatalf("type = %q, want preserved", got)
 	}
-	if got := gjson.GetBytes(body, "error.code").String(); got != "insufficient_quota" {
+	if got := ojson.GetBytesNoCopy(body, "error.code").String(); got != "insufficient_quota" {
 		t.Fatalf("code = %q, want preserved", got)
 	}
 	if errorfilter.ContainsCJK(string(body)) {
@@ -86,7 +86,7 @@ func TestErrorFilterMiddlewarePromotesASCIIErrorEnvelope(t *testing.T) {
 	if recorder.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)
 	}
-	if got := gjson.GetBytes(recorder.Body.Bytes(), "error.message").String(); got != "rate limited" {
+	if got := ojson.GetBytesNoCopy(recorder.Body.Bytes(), "error.message").String(); got != "rate limited" {
 		t.Fatalf("message = %q, want verbatim", got)
 	}
 	if len(*recorded) == 0 {
@@ -104,7 +104,7 @@ func TestErrorFilterMiddlewarePassesSuccessThrough(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
-	if got := gjson.GetBytes(recorder.Body.Bytes(), "id").String(); got != "x" {
+	if got := ojson.GetBytesNoCopy(recorder.Body.Bytes(), "id").String(); got != "x" {
 		t.Fatalf("body = %s, want the handler payload", recorder.Body.Bytes())
 	}
 	if len(*recorded) != 0 {
@@ -141,7 +141,7 @@ func TestErrorFilterMiddlewareLeavesManagementResponsesAlone(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
-	if got := gjson.GetBytes(recorder.Body.Bytes(), "error").String(); got != "失败" {
+	if got := ojson.GetBytesNoCopy(recorder.Body.Bytes(), "error").String(); got != "失败" {
 		t.Fatalf("body = %s, want the management payload unchanged", recorder.Body.Bytes())
 	}
 }
@@ -185,7 +185,7 @@ func TestErrorFilterMiddlewareSanitizesErrorStatusBody(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
-	if got := gjson.GetBytes(recorder.Body.Bytes(), "error.message").String(); got != errorfilter.GenericErrorMessage {
+	if got := ojson.GetBytesNoCopy(recorder.Body.Bytes(), "error.message").String(); got != errorfilter.GenericErrorMessage {
 		t.Fatalf("message = %q, want %q", got, errorfilter.GenericErrorMessage)
 	}
 	if len(*recorded) == 0 {

@@ -4,8 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // IsUnsupportedReasoningParamError reports whether the upstream response
@@ -38,25 +37,25 @@ func IsUnsupportedReasoningParamError(statusCode int, body []byte) bool {
 // "reasoning" object becomes empty after removing the nested effort, it also
 // deletes the "reasoning" object itself.
 func StripReasoningEffortParameters(body []byte) []byte {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+	if len(body) == 0 || !ojson.ValidBytes(body) {
 		return body
 	}
 	result := body
 	// Strip flat field.
-	if gjson.GetBytes(result, "reasoning_effort").Exists() {
-		if updated, err := sjson.DeleteBytes(result, "reasoning_effort"); err == nil {
+	if ojson.GetBytesNoCopy(result, "reasoning_effort").Exists() {
+		if updated, err := ojson.DeleteBytes(result, "reasoning_effort"); err == nil {
 			result = updated
 		}
 	}
 	// Strip nested field.
-	if gjson.GetBytes(result, "reasoning.effort").Exists() {
-		if updated, err := sjson.DeleteBytes(result, "reasoning.effort"); err == nil {
+	if ojson.GetBytesNoCopy(result, "reasoning.effort").Exists() {
+		if updated, err := ojson.DeleteBytes(result, "reasoning.effort"); err == nil {
 			result = updated
 		}
 	}
 	// If reasoning object is now empty, remove it.
-	if r := gjson.GetBytes(result, "reasoning"); r.Exists() && r.IsObject() && len(r.Map()) == 0 {
-		if updated, err := sjson.DeleteBytes(result, "reasoning"); err == nil {
+	if r := ojson.GetBytesNoCopy(result, "reasoning"); r.Exists() && r.IsObject() && len(r.Map()) == 0 {
+		if updated, err := ojson.DeleteBytes(result, "reasoning"); err == nil {
 			result = updated
 		}
 	}

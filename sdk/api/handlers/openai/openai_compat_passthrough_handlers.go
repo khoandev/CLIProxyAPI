@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
-	"github.com/tidwall/gjson"
 )
 
 func (h *OpenAIAPIHandler) Search(c *gin.Context) {
@@ -47,7 +47,7 @@ func (h *OpenAIAPIHandler) openAICompatPassthrough(c *gin.Context, method string
 	if method == http.MethodGet {
 		modelName = strings.TrimSpace(c.Query("model"))
 	} else {
-		modelName = strings.TrimSpace(gjson.GetBytes(rawJSON, "model").String())
+		modelName = strings.TrimSpace(strings.Clone(ojson.GetBytesNoCopy(rawJSON, "model").String()))
 	}
 	if modelName == "" {
 		c.JSON(http.StatusBadRequest, handlers.ErrorResponse{

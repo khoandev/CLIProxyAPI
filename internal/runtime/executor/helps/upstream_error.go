@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // UpstreamBodyError is a StatusError surfaced when an upstream provider returns
@@ -92,11 +92,11 @@ func DetectUpstreamErrorBody(httpStatus int, body []byte) *UpstreamBodyError {
 		}
 		return nil
 	}
-	errField := gjson.GetBytes(body, "error")
+	errField := ojson.GetBytesNoCopy(body, "error")
 	if !errField.Exists() {
 		return nil
 	}
-	if errField.Type == gjson.String {
+	if errField.Type == ojson.String {
 		msg := strings.TrimSpace(errField.String())
 		if msg == "" {
 			return nil
@@ -106,7 +106,7 @@ func DetectUpstreamErrorBody(httpStatus int, body []byte) *UpstreamBodyError {
 			Message: string(body),
 		}
 	}
-	if errField.Type != gjson.JSON {
+	if errField.Type != ojson.JSON {
 		return nil
 	}
 

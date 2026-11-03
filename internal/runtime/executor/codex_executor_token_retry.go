@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
@@ -12,7 +13,6 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	log "github.com/sirupsen/logrus"
-	"github.com/tidwall/sjson"
 )
 
 // refreshCodexAuthForTokenInvalidatedRetry refreshes a Codex credential before a
@@ -129,11 +129,20 @@ func applyCodexFastServiceTier(cfg *config.Config, body []byte) []byte {
 	if cfg == nil || len(body) == 0 {
 		return body
 	}
+	doc := ojson.NewDoc(body)
+	applyCodexFastServiceTierDoc(cfg, doc)
+	return doc.Bytes()
+}
+
+// applyCodexFastServiceTierDoc applies fast-service-tier policy to doc in place.
+func applyCodexFastServiceTierDoc(cfg *config.Config, doc *ojson.Doc) {
+	if cfg == nil || doc == nil {
+		return
+	}
 	if cfg.FastServiceTier {
-		body, _ = sjson.SetBytes(body, "service_tier", "priority")
-		return body
+		_ = doc.Set("service_tier", "priority")
+		return
 	}
 	// fast-service-tier=false: remove any service_tier the caller supplied.
-	body, _ = sjson.DeleteBytes(body, "service_tier")
-	return body
+	_ = doc.Delete("service_tier")
 }

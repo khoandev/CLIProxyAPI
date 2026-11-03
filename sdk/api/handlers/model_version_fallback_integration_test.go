@@ -8,12 +8,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
-	"github.com/tidwall/gjson"
 )
 
 func TestExecuteWithAuthManagerFormats_VersionFallbackGlmFullChain(t *testing.T) {
@@ -64,8 +64,8 @@ func TestExecuteWithAuthManagerFormats_VersionFallbackGlmFullChain(t *testing.T)
 	if errMsg != nil {
 		t.Fatalf("execute err = %+v, attempts=%v", errMsg, attempts)
 	}
-	if gjson.GetBytes(body, "model").String() != m52 {
-		t.Fatalf("response model = %s, want %s", gjson.GetBytes(body, "model").String(), m52)
+	if ojson.GetBytesNoCopy(body, "model").String() != m52 {
+		t.Fatalf("response model = %s, want %s", ojson.GetBytesNoCopy(body, "model").String(), m52)
 	}
 	mu.Lock()
 	defer mu.Unlock()

@@ -13,13 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	homekv "github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -201,14 +200,21 @@ func injectEnabledCreditTypes(payload []byte) []byte {
 	if len(payload) == 0 {
 		return nil
 	}
-	if !gjson.ValidBytes(payload) {
+	if !ojson.ValidBytes(payload) {
 		return nil
 	}
-	updated, err := sjson.SetRawBytes(payload, "enabledCreditTypes", []byte(`["GOOGLE_ONE_AI"]`))
-	if err != nil {
+	doc := ojson.NewDoc(payload)
+	if !injectEnabledCreditTypesDoc(doc) {
 		return nil
 	}
-	return updated
+	return doc.Bytes()
+}
+
+func injectEnabledCreditTypesDoc(doc *ojson.Doc) bool {
+	if doc == nil || doc.Len() == 0 {
+		return false
+	}
+	return doc.SetRawBytes("enabledCreditTypes", []byte(`["GOOGLE_ONE_AI"]`)) == nil
 }
 
 func classifyAntigravity429(body []byte) antigravity429Category {
@@ -244,18 +250,18 @@ func decideAntigravity429(body []byte) antigravity429Decision {
 		return decision
 	}
 
-	status := strings.TrimSpace(gjson.GetBytes(body, "error.status").String())
+	status := strings.TrimSpace(ojson.GetBytesNoCopy(body, "error.status").String())
 	if !strings.EqualFold(status, "RESOURCE_EXHAUSTED") {
 		return decision
 	}
 
-	details := gjson.GetBytes(body, "error.details")
+	details := ojson.GetBytesNoCopy(body, "error.details")
 	if details.Exists() && details.IsArray() {
 		for _, detail := range details.Array() {
 			if detail.Get("@type").String() != "type.googleapis.com/google.rpc.ErrorInfo" {
 				continue
 			}
-			reason := strings.TrimSpace(detail.Get("reason").String())
+			reason := strings.Clone(strings.TrimSpace(detail.Get("reason").String()))
 			decision.reason = reason
 			switch {
 			case strings.EqualFold(reason, "QUOTA_EXHAUSTED"), strings.EqualFold(reason, "INSUFFICIENT_G1_CREDITS_BALANCE"):
@@ -297,7 +303,7 @@ func decideAntigravity429(body []byte) antigravity429Decision {
 // capacity-exhaustion sentence in the error message is a UI hint only; the
 // structured reason and RetryInfo delay are the authoritative retry signal.
 func antigravityIsUIMessage(body []byte) bool {
-	details := gjson.GetBytes(body, "error.details")
+	details := ojson.GetBytesNoCopy(body, "error.details")
 	if !details.Exists() || !details.IsArray() {
 		return false
 	}
@@ -364,7 +370,7 @@ func antigravityHasExplicitCreditsBalanceExhaustedReason(body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
-	details := gjson.GetBytes(body, "error.details")
+	details := ojson.GetBytesNoCopy(body, "error.details")
 	if !details.Exists() || !details.IsArray() {
 		return false
 	}
@@ -614,9 +620,9 @@ func (e *AntigravityExecutor) updateAntigravityCreditsBalanceForTask(ctx context
 			clearAntigravityCreditsPermanentlyDisabled(auth)
 		}
 	}
-	paidTierID := strings.TrimSpace(gjson.GetBytes(bodyBytes, "paidTier.id").String())
+	paidTierID := strings.Clone(strings.TrimSpace(ojson.GetBytesNoCopy(bodyBytes, "paidTier.id").String()))
 
-	credits := gjson.GetBytes(bodyBytes, "paidTier.availableCredits")
+	credits := ojson.GetBytesNoCopy(bodyBytes, "paidTier.availableCredits")
 	if !credits.IsArray() {
 		publish(nil, cliproxyauth.AntigravityCreditsHint{
 			Known:      true,

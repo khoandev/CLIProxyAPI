@@ -7,11 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func TestOpenAICompatExecutorEmbeddingsPassthrough(t *testing.T) {
@@ -45,10 +45,10 @@ func TestOpenAICompatExecutorEmbeddingsPassthrough(t *testing.T) {
 	if gotPath != "/v1/embeddings" {
 		t.Fatalf("path = %q, want %q", gotPath, "/v1/embeddings")
 	}
-	if got := gjson.GetBytes(gotBody, "input").String(); got != "hello" {
+	if got := ojson.GetBytesNoCopy(gotBody, "input").String(); got != "hello" {
 		t.Fatalf("input = %q, want %q; body=%s", got, "hello", string(gotBody))
 	}
-	if got := gjson.GetBytes(resp.Payload, "data.0.object").String(); got != "embedding" {
+	if got := ojson.GetBytesNoCopy(resp.Payload, "data.0.object").String(); got != "embedding" {
 		t.Fatalf("response payload = %s", string(resp.Payload))
 	}
 }

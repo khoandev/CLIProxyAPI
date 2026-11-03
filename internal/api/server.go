@@ -176,19 +176,16 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 
 	// Add middleware
 	engine.Use(logging.GinLogrusLogger())
-	engine.Use(logging.GinLogrusRecovery())
 	engine.Use(logging.CPATraceIDMiddleware())
 	engine.Use(s.maxRequestBodyBytesMiddleware())
 	// Admission runs before every middleware that reads or retains the request
 	// body, so a rejected request costs one status write instead of a full body
 	// read and a request-log wrapper. Management paths still bypass it.
 	engine.Use(s.inFlightAdmissionMiddleware())
-	for _, mw := range optionState.extraMiddleware {
-		engine.Use(mw)
-	}
 
-	// Add request logging middleware (positioned after recovery, before auth)
-	// Resolve logs directory relative to the configuration file directory.
+	// Add request logging middleware before recovery and extra middleware so that
+	// any panic response written by GinLogrusRecovery or custom extraMiddleware is
+	// captured before request logging finalizes.
 	var requestLogger logging.RequestLogger
 	var toggle func(bool)
 	if !cfg.CommercialMode {
@@ -204,6 +201,11 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	}
 	s.requestLogger = requestLogger
 	s.loggerToggle = toggle
+
+	engine.Use(logging.GinLogrusRecovery())
+	for _, mw := range optionState.extraMiddleware {
+		engine.Use(mw)
+	}
 
 	engine.Use(corsMiddleware())
 	engine.Use(s.responseCompressionMiddleware())

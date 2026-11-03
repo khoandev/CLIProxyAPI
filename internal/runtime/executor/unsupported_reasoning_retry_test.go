@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
-	"github.com/tidwall/gjson"
 )
 
 func TestUnsupportedParamRetry_CodexExecute(t *testing.T) {
@@ -59,7 +59,7 @@ func TestUnsupportedParamRetry_CodexExecute(t *testing.T) {
 	if count.Load() != 2 {
 		t.Fatalf("expected 2 requests (retry), got %d", count.Load())
 	}
-	if gjson.GetBytes(secondBody, "reasoning").Exists() || gjson.GetBytes(secondBody, "reasoning_effort").Exists() {
+	if ojson.GetBytesNoCopy(secondBody, "reasoning").Exists() || ojson.GetBytesNoCopy(secondBody, "reasoning_effort").Exists() {
 		t.Fatalf("second request still contains reasoning, body=%s", string(secondBody))
 	}
 }
@@ -132,7 +132,7 @@ func TestUnsupportedParamRetry_OpenAICompatExecute(t *testing.T) {
 	if count.Load() != 2 {
 		t.Fatalf("expected 2 requests (retry), got %d", count.Load())
 	}
-	if gjson.GetBytes(secondBody, "reasoning_effort").Exists() || gjson.GetBytes(secondBody, "reasoning.effort").Exists() {
+	if ojson.GetBytesNoCopy(secondBody, "reasoning_effort").Exists() || ojson.GetBytesNoCopy(secondBody, "reasoning.effort").Exists() {
 		t.Fatalf("second request still contains reasoning, body=%s", string(secondBody))
 	}
 }

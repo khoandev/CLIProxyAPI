@@ -1,9 +1,8 @@
 package executor
 
 import (
+	"github.com/MoeForge/moego/ojson"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 func codexFallbackDisplayModel(opts cliproxyexecutor.Options) string {
@@ -19,12 +18,12 @@ func rewriteCodexResponseModel(payload []byte, displayModel string) []byte {
 	if displayModel == "" || len(payload) == 0 {
 		return payload
 	}
-	out, err := sjson.SetBytes(payload, "model", displayModel)
+	out, err := ojson.SetBytes(payload, "model", displayModel)
 	if err != nil {
 		return payload
 	}
-	if gjson.GetBytes(out, "response.model").Exists() {
-		if patched, errPatch := sjson.SetBytes(out, "response.model", displayModel); errPatch == nil {
+	if ojson.GetBytesNoCopy(out, "response.model").Exists() {
+		if patched, errPatch := ojson.SetBytes(out, "response.model", displayModel); errPatch == nil {
 			out = patched
 		}
 	}

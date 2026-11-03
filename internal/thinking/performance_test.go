@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
 )
 
 // summaryRescanProbePaths are the candidate paths ExtractSummaryConfig probes
@@ -38,7 +38,7 @@ var summaryRescanProbePaths = []string{
 // scans the whole document once per path. The guard must reject it.
 func summaryRescanProbe(body []byte) {
 	for _, path := range summaryRescanProbePaths {
-		if gjson.GetBytes(body, path).Exists() {
+		if ojson.GetBytesNoCopy(body, path).Exists() {
 			return
 		}
 	}
@@ -90,7 +90,7 @@ func TestExtractSummaryConfigDoesNotRescanLargePayload(t *testing.T) {
 	}
 	for i := range samples {
 		lookup := timeOnce(func() {
-			if gjson.GetBytes(payload, "reasoning.summary").Exists() {
+			if ojson.GetBytesNoCopy(payload, "reasoning.summary").Exists() {
 				t.Fatal("unexpected summary config")
 			}
 		})
