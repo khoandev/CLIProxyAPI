@@ -1,13 +1,15 @@
 // Package errorfilter sanitizes error payloads before they reach API clients.
 //
 // Upstream gateways in front of this proxy answer in Chinese, and those strings
-// used to reach clients verbatim. Every error path funnels through the helpers
-// here so a CJK message is replaced by a fixed generic string while the envelope
-// classification (type/code) survives when it is ASCII.
+// used to reach clients verbatim. Some also expose internal routing state such
+// as per-model cooldowns or account availability. Every error path funnels
+// through the helpers here so such a message is replaced by a fixed generic
+// string while the envelope classification (type/code) survives when it is ASCII.
 package errorfilter
 
 import (
 	"encoding/json"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -15,8 +17,9 @@ import (
 )
 
 // GenericErrorMessage is the only message the proxy returns for an error whose
-// original text contains CJK characters. The branding suffix matches
-// handlers.withErrorBranding, so that helper will not append a second suffix.
+// original text contains CJK characters or exposes internal routing state. The
+// branding suffix matches handlers.withErrorBranding, so that helper will not
+// append a second suffix.
 const GenericErrorMessage = "Upstream service error (llmgate.app)"
 
 const (
@@ -62,9 +65,73 @@ func isCJKRune(r rune) bool {
 	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul)
 }
 
-// SanitizeMessage returns GenericErrorMessage when msg contains CJK, else msg unchanged.
+// internalDetailMarkers are lowercase fragments that mark an error as leaking
+// internal routing state (model/credential cooldown, account availability)
+// instead of describing the client's request. Those payloads are replaced by
+// GenericErrorMessage while the envelope type/code still classify the failure.
+var internalDetailMarkers = [...]string{
+	"unavailable on every account",
+	"per-model cooldown",
+	"try another model",
+	"model is unavailable",
+}
+
+// internalDetailCodes mark the same class of failure when the accompanying
+// message is already generic.
+var internalDetailCodes = [...]string{
+	"model_unavailable",
+}
+
+// IsInternalDetail reports whether s describes internal routing state that must
+// not reach clients.
+func IsInternalDetail(s string) bool {
+	for _, marker := range internalDetailMarkers {
+		if containsFold(s, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isInternalDetailCode(code string) bool {
+	trimmed := strings.TrimSpace(code)
+	for _, candidate := range internalDetailCodes {
+		if strings.EqualFold(trimmed, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsFold reports whether s contains sub, folding ASCII case without
+// allocating.
+func containsFold[S ~string | ~[]byte](s S, sub string) bool {
+	if len(sub) == 0 || len(s) < len(sub) {
+		return false
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		matched := true
+		for j := range len(sub) {
+			c := s[i+j]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != sub[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+// SanitizeMessage returns GenericErrorMessage when msg contains CJK or exposes
+// internal routing state, else msg unchanged.
 func SanitizeMessage(msg string) string {
-	if !ContainsCJK(msg) {
+	if !ContainsCJK(msg) && !IsInternalDetail(msg) {
 		return msg
 	}
 	return GenericErrorMessage
@@ -96,20 +163,29 @@ func firstNonSpaceByte(body []byte) int {
 	return -1
 }
 
-// SanitizeJSONErrorBody replaces CJK text inside a JSON error body, preserving the
-// envelope type/code when they are ASCII. Returns the body to use and whether it changed.
+// SanitizeJSONErrorBody replaces CJK text and internal routing detail inside a
+// JSON error body, preserving the envelope type/code when they are ASCII.
+// Returns the body to use and whether it changed.
 //
 // The sjson writes here must keep their default allocating behavior: callers pass
 // buffers that other readers may still alias, so an in-place rewrite would corrupt
 // every ojson.Result already derived from those bytes (see
-// util.TestNoInPlaceSJSONWrites). This path only runs for bodies that carry CJK.
+// util.TestNoInPlaceSJSONWrites). This path only runs for bodies that carry CJK
+// or internal detail.
 func SanitizeJSONErrorBody(body []byte) ([]byte, bool) {
-	if !containsCJKBytes(body) {
+	internalDetail := hasInternalDetailEnvelope(body)
+	if !internalDetail && !containsCJKBytes(body) {
 		return body, false
 	}
 
 	asciiType := asciiEnvelopeField(body, "error.type")
 	asciiCode := asciiEnvelopeField(body, "error.code")
+
+	if internalDetail {
+		// Rebuild instead of rewriting fields: the original payload can also
+		// carry cooldown/provider fields that must not reach clients.
+		return BuildGenericErrorBody(asciiType, asciiCode), true
+	}
 
 	out := body
 	errValue := ojson.GetBytesNoCopy(body, "error")
@@ -141,6 +217,24 @@ func SanitizeJSONErrorBody(body []byte) ([]byte, bool) {
 		return BuildGenericErrorBody(asciiType, asciiCode), true
 	}
 	return out, true
+}
+
+// hasInternalDetailEnvelope reports whether a JSON error envelope carries
+// internal routing detail in its message or code.
+func hasInternalDetailEnvelope(body []byte) bool {
+	for _, path := range [...]string{"error.message", "error", "response.error.message", "message"} {
+		value := ojson.GetBytesNoCopy(body, path)
+		if value.Type == ojson.String && IsInternalDetail(value.String()) {
+			return true
+		}
+	}
+	for _, path := range [...]string{"error.code", "response.error.code"} {
+		value := ojson.GetBytesNoCopy(body, path)
+		if value.Type == ojson.String && isInternalDetailCode(value.String()) {
+			return true
+		}
+	}
+	return false
 }
 
 // sanitizeErrorObject replaces CJK message/code/type inside the error object at path.
@@ -183,9 +277,10 @@ func asciiEnvelopeField(body []byte, path string) string {
 }
 
 // SanitizeErrorBody sanitizes any error body: JSON error envelopes are rewritten
-// field-by-field, any other body containing CJK is replaced wholesale.
+// field-by-field, any other body containing CJK or internal routing detail is
+// replaced wholesale.
 func SanitizeErrorBody(body []byte) []byte {
-	if !containsCJKBytes(body) {
+	if !containsCJKBytes(body) && !containsInternalDetailBytes(body) {
 		return body
 	}
 	if IsJSONErrorBody(body) {
@@ -193,6 +288,15 @@ func SanitizeErrorBody(body []byte) []byte {
 		return sanitized
 	}
 	return []byte(GenericErrorMessage)
+}
+
+func containsInternalDetailBytes(body []byte) bool {
+	for _, marker := range internalDetailMarkers {
+		if containsFold(body, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // BuildGenericErrorBody returns {"error":{"message":GenericErrorMessage,"type":typ,"code":code}}.

@@ -41,6 +41,37 @@ func TestSanitizeMessage(t *testing.T) {
 	}
 }
 
+func TestSanitizeMessageInternalDetail(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "model unavailable on every account",
+			in:   "model is unavailable on every account (per-model cooldown), try another model",
+			want: GenericErrorMessage,
+		},
+		{
+			name: "request error unchanged",
+			in:   "messages: at least one message is required",
+			want: "messages: at least one message is required",
+		},
+		{
+			name: "rate limit unchanged",
+			in:   "rate limited",
+			want: "rate limited",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SanitizeMessage(tc.in); got != tc.want {
+				t.Fatalf("SanitizeMessage(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSanitizeJSONErrorBody(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -63,6 +94,14 @@ func TestSanitizeJSONErrorBody(t *testing.T) {
 			body:        `{"error":{"message":"rate limited"}}`,
 			wantChanged: false,
 			wantMessage: "rate limited",
+		},
+		{
+			name:        "internal model availability detail rebuilt",
+			body:        `{"error":{"message":"model is unavailable on every account (per-model cooldown), try another model","type":"invalid_request_error","param":null,"code":"model_unavailable"}}`,
+			wantChanged: true,
+			wantMessage: GenericErrorMessage,
+			wantType:    "invalid_request_error",
+			wantCode:    "model_unavailable",
 		},
 		{
 			name:        "string error member",
@@ -163,6 +202,9 @@ func TestIsJSONErrorBody(t *testing.T) {
 func TestSanitizeErrorBody(t *testing.T) {
 	if got := string(SanitizeErrorBody([]byte("错误: 配额不足"))); got != GenericErrorMessage {
 		t.Fatalf("plain text CJK body = %q, want %q", got, GenericErrorMessage)
+	}
+	if got := string(SanitizeErrorBody([]byte("model is unavailable on every account (per-model cooldown), try another model"))); got != GenericErrorMessage {
+		t.Fatalf("plain text internal detail body = %q, want %q", got, GenericErrorMessage)
 	}
 	envelope := `{"error":{"message":"配额不足","type":"insufficient_quota"}}`
 	out := SanitizeErrorBody([]byte(envelope))
