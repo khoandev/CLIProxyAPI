@@ -45,10 +45,19 @@ func buildReloadTestPlugin(t *testing.T, version int, outPath string) {
 	}
 }
 
-func TestUnixPluginReloadAfterShutdownUsesReplacedFile(t *testing.T) {
+// skipInProcessGoPluginLoad skips a test that maps a Go c-shared library into
+// this process. macOS cannot host a second Go runtime next to the host runtime:
+// once the plugin runtime grows or copies a goroutine stack, the host unwinder
+// hits the plugin runtime's cgo callback frames and the process aborts.
+func skipInProcessGoPluginLoad(t *testing.T) {
+	t.Helper()
 	if runtime.GOOS == "darwin" {
-		t.Skip("skipping c-shared reload tests on darwin: multiple Go runtimes in the same process are unsupported on macOS")
+		t.Skip("skipping in-process c-shared plugin load tests on darwin: multiple Go runtimes in the same process are unsupported on macOS")
 	}
+}
+
+func TestUnixPluginReloadAfterShutdownUsesReplacedFile(t *testing.T) {
+	skipInProcessGoPluginLoad(t)
 	dir := t.TempDir()
 	ext := ".so"
 	if runtime.GOOS == "darwin" {
@@ -171,9 +180,7 @@ func testShutdownCallCount(t *testing.T, client pluginClient) int {
 }
 
 func TestUnixPluginOpenFailureKeepsImageUsableOnRetry(t *testing.T) {
-	if runtime.GOOS == "darwin" {
-		t.Skip("skipping c-shared reload tests on darwin: multiple Go runtimes in the same process are unsupported on macOS")
-	}
+	skipInProcessGoPluginLoad(t)
 	dir := t.TempDir()
 	pluginPath := filepath.Join(dir, "failing"+testPluginLibraryExtension())
 	buildReloadTestPlugin(t, 3, pluginPath)
@@ -247,22 +254,26 @@ func TestUnixPluginLoaderIsolatesSigillOnDlopen(t *testing.T) {
 		t.Fatal("PluginLoaded(broken) = true, want false after preflight SIGILL failure")
 	}
 
-	// Replacing the broken binary with a valid build under the same path
-	// must succeed without needing to restart the host process.
-	buildReloadTestPlugin(t, 1, pluginPath)
-	file.Version = "1"
-	client, errFixed := loader.Open(file, host)
-	if errFixed != nil {
-		t.Fatalf("Open() fixed plugin after SIGILL error = %v", errFixed)
-	}
-	defer client.Shutdown()
-	resp, errCall := client.Call(context.Background(), "test.marker", nil)
-	if errCall != nil {
-		t.Fatalf("Call() fixed plugin error = %v", errCall)
-	}
-	if string(resp) != "v1" {
-		t.Fatalf("Call() fixed plugin response = %q, want v1", resp)
-	}
+	t.Run("replacing the broken binary with a valid build", func(t *testing.T) {
+		skipInProcessGoPluginLoad(t)
+
+		// Replacing the broken binary with a valid build under the same path
+		// must succeed without needing to restart the host process.
+		buildReloadTestPlugin(t, 1, pluginPath)
+		file.Version = "1"
+		client, errFixed := loader.Open(file, host)
+		if errFixed != nil {
+			t.Fatalf("Open() fixed plugin after SIGILL error = %v", errFixed)
+		}
+		defer client.Shutdown()
+		resp, errCall := client.Call(context.Background(), "test.marker", nil)
+		if errCall != nil {
+			t.Fatalf("Call() fixed plugin error = %v", errCall)
+		}
+		if string(resp) != "v1" {
+			t.Fatalf("Call() fixed plugin response = %q, want v1", resp)
+		}
+	})
 }
 
 func TestUnixPluginLoaderDoesNotCacheTransientProbeStartFailure(t *testing.T) {
@@ -297,21 +308,25 @@ func TestUnixPluginLoaderDoesNotCacheTransientProbeStartFailure(t *testing.T) {
 		t.Fatal("Open() with missing probe binary succeeded, want error")
 	}
 
-	// Once the transient failure resolves, the same plugin binary must load
-	// without needing a content change or process restart.
-	pluginProbeExecutable = origProbeExec
-	client, errOpen := loader.Open(file, host)
-	if errOpen != nil {
-		t.Fatalf("Open() after transient probe failure recovered = %v, want nil", errOpen)
-	}
-	defer client.Shutdown()
-	resp, errCall := client.Call(context.Background(), "test.marker", nil)
-	if errCall != nil {
-		t.Fatalf("Call() recovered plugin error = %v", errCall)
-	}
-	if string(resp) != "v1" {
-		t.Fatalf("Call() recovered plugin response = %q, want v1", resp)
-	}
+	t.Run("recovery after the transient failure resolves", func(t *testing.T) {
+		skipInProcessGoPluginLoad(t)
+
+		// Once the transient failure resolves, the same plugin binary must load
+		// without needing a content change or process restart.
+		pluginProbeExecutable = origProbeExec
+		client, errOpen := loader.Open(file, host)
+		if errOpen != nil {
+			t.Fatalf("Open() after transient probe failure recovered = %v, want nil", errOpen)
+		}
+		defer client.Shutdown()
+		resp, errCall := client.Call(context.Background(), "test.marker", nil)
+		if errCall != nil {
+			t.Fatalf("Call() recovered plugin error = %v", errCall)
+		}
+		if string(resp) != "v1" {
+			t.Fatalf("Call() recovered plugin response = %q, want v1", resp)
+		}
+	})
 }
 
 func TestUnixPluginLoaderDoesNotCacheUnloadedProbeSuccess(t *testing.T) {
