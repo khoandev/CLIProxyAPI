@@ -576,6 +576,9 @@ func (h *OpenAIAPIHandler) handleStreamingResponse(c *gin.Context, rawJSON []byt
 			commitSSE()
 
 			initialTermErr, initialHasFinishReason := inspectChatStreamChunk(chunk)
+			if initialTermErr != nil {
+				h.LoggingAPIResponseError(c, initialTermErr)
+			}
 			_ = (&handlers.SSEFrameWriter{}).Write(c.Writer, chunk)
 			flusher.Flush()
 			if initialTermErr != nil {
@@ -736,6 +739,14 @@ func (h *OpenAIAPIHandler) handleCompletionsStreamingResponse(c *gin.Context, ra
 			stopKeepAlive()
 			commitSSE()
 
+			if termErr, _ := inspectChatStreamChunk(chunk); termErr != nil {
+				h.LoggingAPIResponseError(c, termErr)
+				_ = (&handlers.SSEFrameWriter{}).Write(c.Writer, chunk)
+				flusher.Flush()
+				cliCancel(termErr.Error)
+				return
+			}
+
 			// Write the first chunk
 			converted := convertChatCompletionsStreamChunkToCompletions(chunk)
 			var initialHasFinishReason bool
@@ -818,6 +829,7 @@ func inspectChatStreamChunk(chunk []byte) (*interfaces.ErrorMessage, bool) {
 
 func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, initialHasFinishReason bool) {
 	sawFinishReason := initialHasFinishReason
+	loggedTerminalErr := false
 	var terminalChunkErr *interfaces.ErrorMessage
 	var sseFrame handlers.SSEFrameWriter
 	h.ForwardStream(c, flusher, cancel, data, errs, handlers.StreamForwardOptions{
@@ -825,16 +837,31 @@ func (h *OpenAIAPIHandler) handleStreamResult(c *gin.Context, flusher http.Flush
 			if termErr, hasFinishReason := inspectChatStreamChunk(chunk); termErr != nil {
 				terminalChunkErr = termErr
 				sawFinishReason = true
+				if !loggedTerminalErr {
+					h.LoggingAPIResponseError(c, termErr)
+					loggedTerminalErr = true
+				}
 			} else if hasFinishReason {
 				sawFinishReason = true
 			}
 			_ = sseFrame.Write(c.Writer, chunk)
 		},
 		ChunkError: func() *interfaces.ErrorMessage {
+			if terminalChunkErr != nil && !loggedTerminalErr {
+				h.LoggingAPIResponseError(c, terminalChunkErr)
+				loggedTerminalErr = true
+			}
 			return terminalChunkErr
 		},
 		WriteTerminalError: func(errMsg *interfaces.ErrorMessage) {
-			if errMsg == nil || terminalChunkErr != nil {
+			if errMsg == nil {
+				return
+			}
+			if !loggedTerminalErr {
+				h.LoggingAPIResponseError(c, errMsg)
+				loggedTerminalErr = true
+			}
+			if terminalChunkErr != nil {
 				return
 			}
 			status := http.StatusInternalServerError
