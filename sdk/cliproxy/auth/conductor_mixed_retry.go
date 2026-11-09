@@ -393,6 +393,14 @@ func isRelayRateLimitError(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Model cooldown errors also serialize as a JSON body with a 429 status and
+	// a reset hint, but they are built locally: they carry the trusted Retry-After
+	// deadline and must keep their cooldown identity instead of collapsing into a
+	// generic relay rate-limit error.
+	var cooldown interface{ IsModelCooldown() bool }
+	if errors.As(err, &cooldown) && cooldown != nil && cooldown.IsModelCooldown() {
+		return false
+	}
 	if statusCodeFromError(err) != http.StatusTooManyRequests {
 		return false
 	}
