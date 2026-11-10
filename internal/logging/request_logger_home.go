@@ -256,3 +256,9 @@ func (w *homeStreamingLogWriter) Close() error {
 	}
 	return client.RPushRequestLog(context.Background(), raw)
 }
+
+// Discard stops the streaming writer without publishing a final request log.
+// The response body is buffered in a spool, so there is nothing to flush.
+func (w *homeStreamingLogWriter) Discard() error {
+	return nil
+}

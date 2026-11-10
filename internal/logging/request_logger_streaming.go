@@ -228,6 +228,16 @@ func (w *FileStreamingLogWriter) Close() error {
 	return writeErr
 }
 
+// Discard stops the streaming writer and removes temporary files without
+// creating a final log file.
+func (w *FileStreamingLogWriter) Discard() error {
+	if w == nil {
+		return nil
+	}
+	w.logFilename = ""
+	return w.Close()
+}
+
 func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
 	if errWrite := writeRequestInfoWithBody(logFile, w.url, w.method, w.requestHeaders, w.requestSpool.Bytes(), w.requestSpool.Path(), w.timestamp, "http", inferUpstreamTransport(w.apiRequest, w.apiRequestSource, w.apiResponse, w.apiResponseSource, w.apiWebsocketTimeline, nil, nil), true); errWrite != nil {
 		return errWrite
