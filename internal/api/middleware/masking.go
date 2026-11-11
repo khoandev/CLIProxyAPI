@@ -16,12 +16,16 @@ type maskRule struct {
 }
 
 // maskRuleSet is the ordered replacement table for one request together with the
-// distinct lowercase ASCII roots its rules cover.
+// distinct roots its rules cover. A root is lowercase ASCII, except that a family
+// also lists the camel-case spelling (e.g. "codeBuddy") of any rule whose source
+// is written that way.
 //
 // Order matches the former wrapper nesting: with antigravity registered last it
 // was the outermost writer, so it rewrote the body first, then brand, then kiro.
 // Within kiro the domain must go before the bare token so it never becomes
-// <token>.dev, and within brand the kiraai.vn domain must go before "Kira AI".
+// <token>.dev, and within brand every vendor domain must go before the bare
+// product token that would otherwise claim it ("www.workbuddy.ai" before
+// "workbuddy", "kiraai.vn" before "Kira AI").
 // No replacement emits text that another family matches, so the order carries no
 // cascading effect and only guards within-family cases.
 type maskRuleSet struct {
@@ -33,19 +37,32 @@ type maskRuleSet struct {
 	variants []string
 }
 
-// brandMaskRules hides upstream vendor branding (kiraai.vn, opencode2api) behind
-// llmgate.app and Kira AI behind Model AI. These apply to every response.
+// brandMaskRules hides upstream vendor branding (kiraai.vn, opencode2api,
+// www.workbuddy.ai, copilot.tencent.com) behind llmgate.app and the vendor
+// product names behind the LLMGate brand. These apply to every response.
 var brandMaskRules = maskRuleSet{
 	rules: []maskRule{
 		{"kiraai.vn", "llmgate.app"},
 		{"KIRAAI.VN", "LLMGATE.APP"},
 		{"opencode2api", "llmgate.app"},
 		{"OPENCODE2API", "LLMGATE.APP"},
+		{"www.workbuddy.ai", "llmgate.app"},
+		{"WWW.WORKBUDDY.AI", "LLMGATE.APP"},
+		{"workbuddy", "llmgate"},
+		{"Workbuddy", "LLMGate"},
+		{"WorkBuddy", "LLMGate"},
+		{"WORKBUDDY", "LLMGATE"},
+		{"copilot.tencent.com", "llmgate.app"},
+		{"COPILOT.TENCENT.COM", "LLMGATE.APP"},
+		{"codebuddy", "llmgate"},
+		{"Codebuddy", "LLMGate"},
+		{"CodeBuddy", "LLMGate"},
+		{"CODEBUDDY", "LLMGATE"},
 		{"Kira AI", "Model AI"},
 		{"kira ai", "model ai"},
 		{"KIRA AI", "MODEL AI"},
 	},
-	needles: []string{"kira", "opencode"},
+	needles: []string{"kira", "opencode", "workbuddy", "workBuddy", "copilot", "codebuddy", "codeBuddy"},
 }
 
 // antigravityMaskRules hides antigravity behind gemini.
@@ -133,12 +150,14 @@ func newMaskProfile(domain, token string) maskProfile {
 }
 
 // MaskingMiddleware wraps responses and rewrites every third-party brand so the
-// client only sees this service: vendor domains (kiraai.vn, opencode2api) become
-// llmgate.app and Kira AI becomes Model AI on all responses, kiro becomes Claude
-// or OpenAI branding for masked models, and antigravity becomes gemini for Gemini
-// models. All families share one response writer, so a chunk is scanned once per
-// distinct root instead of once per middleware. The replacement applies to both
-// streaming and non-streaming responses.
+// client only sees this service: on all responses vendor domains (kiraai.vn,
+// opencode2api, www.workbuddy.ai, copilot.tencent.com) become llmgate.app, the
+// vendor product names (WorkBuddy, CodeBuddy) become LLMGate, and Kira AI becomes
+// Model AI; kiro becomes Claude or OpenAI branding for masked models, and
+// antigravity becomes gemini for Gemini models. All families share one response
+// writer, so a chunk is scanned once per distinct root instead of once per
+// middleware. The replacement applies to both streaming and non-streaming
+// responses.
 func MaskingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer = &maskingResponseWriter{ResponseWriter: c.Writer, ctx: c}

@@ -5,11 +5,13 @@ import (
 	"strings"
 )
 
-// needleVariants returns the cased forms a rule family covers for each
-// lowercase root needle: lowercase, title case and uppercase.
+// needleVariants returns the cased forms a rule family covers for each root
+// needle: lowercase, title case and uppercase. A family that rewrites a
+// camel-case source ("CodeBuddy") lists that spelling as its own needle, so the
+// camel form is among the variants too.
 //
-// Every replacement rule spells its source in exactly one of those three forms,
-// so scanning for the variants finds every byte sequence a rule can rewrite.
+// Every replacement rule spells its source in one of those forms, so scanning
+// for the variants finds every byte sequence a rule can rewrite.
 // Mixed cases such as "kIrA" are not rewritten by any rule, so not detecting
 // them changes no output byte. TestMaskNeedleVariantsCoverEveryRule pins the
 // invariant that keeps this prefilter exact.

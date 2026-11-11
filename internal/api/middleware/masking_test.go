@@ -49,6 +49,42 @@ func TestMaskRuleSetMask(t *testing.T) {
 			want: "LLMGATE.APP",
 		},
 		{
+			name: "workbuddy domain and product name replaced",
+			set:  brandOnlySet,
+			in:   `{"text": "Visit www.workbuddy.ai with WorkBuddy and workbuddy"}`,
+			want: `{"text": "Visit llmgate.app with LLMGate and llmgate"}`,
+		},
+		{
+			name: "uppercase workbuddy domain and product name replaced",
+			set:  brandOnlySet,
+			in:   "WWW.WORKBUDDY.AI and WORKBUDDY",
+			want: "LLMGATE.APP and LLMGATE",
+		},
+		{
+			name: "workbuddy domain must not leave a vendor domain",
+			set:  brandOnlySet,
+			in:   "see www.workbuddy.ai now",
+			want: "see llmgate.app now",
+		},
+		{
+			name: "codebuddy domain and product name replaced",
+			set:  brandOnlySet,
+			in:   `{"error":{"message":"copilot.tencent.com: CodeBuddy quota exceeded"}}`,
+			want: `{"error":{"message":"llmgate.app: LLMGate quota exceeded"}}`,
+		},
+		{
+			name: "uppercase codebuddy domain replaced",
+			set:  brandOnlySet,
+			in:   "COPILOT.TENCENT.COM and CODEBUDDY",
+			want: "LLMGATE.APP and LLMGATE",
+		},
+		{
+			name: "bare copilot brand stays untouched",
+			set:  brandOnlySet,
+			in:   "GitHub Copilot and copilot.tencent.com",
+			want: "GitHub Copilot and llmgate.app",
+		},
+		{
 			name: "no branding leaves input untouched",
 			set:  brandOnlySet,
 			in:   `{"ok": true}`,
@@ -327,7 +363,7 @@ func TestMaskingBrandAppliesToEveryModelFamily(t *testing.T) {
 				c.Header("Content-Type", "application/json")
 				c.Header("Content-Length", "1000")
 				c.Status(http.StatusOK)
-				c.Writer.WriteString(`{"content": "powered by kiraai.vn and Kira AI and opencode2api"}`)
+				c.Writer.WriteString(`{"content": "powered by kiraai.vn and Kira AI and opencode2api and www.workbuddy.ai and CodeBuddy"}`)
 			})
 
 			reqBody := `{"model": "` + model + `", "messages": [{"role": "user", "content": "hi"}]}`
@@ -335,7 +371,7 @@ func TestMaskingBrandAppliesToEveryModelFamily(t *testing.T) {
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, req)
 
-			if got, want := rec.Body.String(), `{"content": "powered by llmgate.app and Model AI and llmgate.app"}`; got != want {
+			if got, want := rec.Body.String(), `{"content": "powered by llmgate.app and Model AI and llmgate.app and llmgate.app and LLMGate"}`; got != want {
 				t.Errorf("body = %q, want %q", got, want)
 			}
 			if got := rec.Header().Get("Content-Length"); got != "" {
