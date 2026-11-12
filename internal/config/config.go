@@ -72,6 +72,18 @@ type Config struct {
 	// CommercialMode disables high-overhead request logging and HTTP middleware features to minimize per-request memory usage.
 	CommercialMode bool `yaml:"commercial-mode" json:"commercial-mode"`
 
+	// CacheBudgetBytes bounds the memory the in-process caches may keep.
+	// 0 (default) derives the budget from the memory limit of the host, so a
+	// small host keeps a smaller cache. A positive value sets the budget
+	// explicitly, capped at the sum of the per cache defaults.
+	CacheBudgetBytes int64 `yaml:"cache-budget-bytes" json:"cache-budget-bytes"`
+
+	// StrictMemoryLimits derives the per request memory limits from the
+	// memory limit of the host instead of accepting them without a bound.
+	// It is disabled by default, so a request body stays unlimited until the
+	// operator enables it.
+	StrictMemoryLimits bool `yaml:"strict-memory-limits" json:"strict-memory-limits"`
+
 	// LoggingToFile controls whether application logs are written to rotating files or stdout.
 	LoggingToFile bool `yaml:"logging-to-file" json:"logging-to-file"`
 

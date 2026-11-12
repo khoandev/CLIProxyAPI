@@ -68,10 +68,19 @@ func (s *Server) maxRequestBodyBytes() int64 {
 		return 0
 	}
 	cfg := s.getConfig()
-	if cfg == nil || cfg.MaxRequestBodyBytes <= 0 {
+	if cfg == nil {
 		return 0
 	}
-	return cfg.MaxRequestBodyBytes
+	if cfg.MaxRequestBodyBytes > 0 {
+		return cfg.MaxRequestBodyBytes
+	}
+	// The configured value of zero keeps its documented meaning: the request
+	// body is not limited. Only the strict mode derives a limit from the
+	// memory limit of the host.
+	if !strictMemoryLimitsEnabled(cfg) {
+		return 0
+	}
+	return derivedRequestBodyBytes()
 }
 
 type requestBodyTracker struct {

@@ -425,7 +425,7 @@ func xaiReasoningReplayEntryBytes(items [][]byte) int {
 // enforceXAIReasoningReplayLimitsLocked evicts the oldest entries until the
 // cache fits both the entry count and the aggregate byte budget.
 func enforceXAIReasoningReplayLimitsLocked() {
-	for len(xaiReasoningReplayEntries) > XAIReasoningReplayCacheMaxEntries || xaiReasoningReplayTotalBytes > XAIReasoningReplayCacheMaxTotalBytes {
+	for int64(len(xaiReasoningReplayEntries)) > ScaleCacheLimit(XAIReasoningReplayCacheMaxEntries) || int64(xaiReasoningReplayTotalBytes) > ScaleCacheLimit(XAIReasoningReplayCacheMaxTotalBytes) {
 		if len(xaiReasoningReplayEntries) == 0 {
 			xaiReasoningReplayTotalBytes = 0
 			return

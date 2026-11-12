@@ -128,7 +128,7 @@ func antigravityReasoningReplayEntryBytes(items [][]byte) int {
 //
 // antigravityReasoningReplayMu must be held by the caller.
 func enforceAntigravityReasoningReplayLimitsLocked() {
-	for len(antigravityReasoningReplayEntries) > AntigravityReasoningReplayCacheMaxEntries || antigravityReasoningReplayTotalBytes > AntigravityReasoningReplayCacheMaxTotalBytes {
+	for int64(len(antigravityReasoningReplayEntries)) > ScaleCacheLimit(AntigravityReasoningReplayCacheMaxEntries) || int64(antigravityReasoningReplayTotalBytes) > ScaleCacheLimit(AntigravityReasoningReplayCacheMaxTotalBytes) {
 		if len(antigravityReasoningReplayEntries) == 0 {
 			antigravityReasoningReplayTotalBytes = 0
 			return
@@ -265,7 +265,7 @@ func getAntigravityReasoningReplayItemsWithSnapshot(ctx context.Context, modelNa
 		if !found {
 			return nil, AntigravityReasoningReplaySnapshot{loaded: true}, false, fmt.Errorf("could not fence absent antigravity reasoning replay state")
 		}
-		if len(raw) > antigravityReasoningReplayCacheMaxSerializedBytes {
+		if int64(len(raw)) > ScaleCacheLimit(antigravityReasoningReplayCacheMaxSerializedBytes) {
 			return nil, AntigravityReasoningReplaySnapshot{loaded: true, found: true}, false, nil
 		}
 		snapshot := AntigravityReasoningReplaySnapshot{raw: append([]byte(nil), raw...), loaded: true, found: true}
@@ -322,7 +322,7 @@ func getAntigravityReasoningReplayItemsWithSnapshot(ctx context.Context, modelNa
 // per-key tombstone so eviction of an unrelated key cannot invalidate it.
 // antigravityReasoningReplayMu must be held by the caller.
 func reserveAntigravityReasoningReplayAbsentLocked(key string, now time.Time) AntigravityReasoningReplaySnapshot {
-	if len(antigravityReasoningReplayEntries) >= AntigravityReasoningReplayCacheMaxEntries {
+	if int64(len(antigravityReasoningReplayEntries)) >= ScaleCacheLimit(AntigravityReasoningReplayCacheMaxEntries) {
 		evictOldestAntigravityReasoningReplayEntries(AntigravityReasoningReplayCacheEvictBatchSize)
 	}
 	antigravityReasoningReplayNextRevision++
@@ -382,7 +382,7 @@ func ReplaceAntigravityReasoningReplayItemsIfUnchanged(ctx context.Context, mode
 			if errGet != nil || !currentFound {
 				return false, errGet
 			}
-			if len(currentRaw) > antigravityReasoningReplayCacheMaxSerializedBytes {
+			if int64(len(currentRaw)) > ScaleCacheLimit(antigravityReasoningReplayCacheMaxSerializedBytes) {
 				return false, nil
 			}
 			currentItems, deleted, _, currentBranch, okDecode := decodeAntigravityReasoningReplayHomeValue(currentRaw)
@@ -616,7 +616,7 @@ func normalizeAntigravityReasoningReplayItems(items [][]byte) ([][]byte, bool) {
 		normalizedItem, ok := normalizeAntigravityReasoningReplayItem(item)
 		if ok {
 			totalBytes += len(normalizedItem)
-			if totalBytes > AntigravityReasoningReplayCacheMaxBytesPerEntry {
+			if int64(totalBytes) > ScaleCacheLimit(AntigravityReasoningReplayCacheMaxBytesPerEntry) {
 				return nil, false
 			}
 			normalized = append(normalized, normalizedItem)

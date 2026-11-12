@@ -290,7 +290,7 @@ func readOrReserveClaudeThinkingReplayHomeValue(ctx context.Context, client kimi
 			return nil, errGet
 		}
 		if found {
-			if len(raw) > claudeThinkingReplayCacheMaxSerializedBytes {
+			if int64(len(raw)) > ScaleCacheLimit(claudeThinkingReplayCacheMaxSerializedBytes) {
 				return nil, fmt.Errorf("Claude thinking replay value exceeds size limit")
 			}
 			return raw, nil
@@ -322,7 +322,7 @@ func marshalClaudeThinkingReplayHomeValue(generation string, deleted bool, conte
 }
 
 func decodeClaudeThinkingReplayHomeValue(raw []byte) ([][]byte, string, bool, bool) {
-	if len(raw) == 0 || len(raw) > claudeThinkingReplayCacheMaxSerializedBytes || !ojson.ValidBytes(raw) {
+	if len(raw) == 0 || int64(len(raw)) > ScaleCacheLimit(claudeThinkingReplayCacheMaxSerializedBytes) || !ojson.ValidBytes(raw) {
 		return nil, "", false, false
 	}
 	var value claudeThinkingReplayHomeValue
@@ -373,7 +373,7 @@ func appendClaudeThinkingReplayContent(contents [][]byte, content []byte) [][]by
 		}
 	}
 	cloned = append(cloned, append([]byte(nil), content...))
-	for len(cloned) > ClaudeThinkingReplayCacheMaxTurnsPerSession || claudeThinkingReplayEntryBytes(cloned) > ClaudeThinkingReplayCacheMaxBytesPerSession {
+	for len(cloned) > ClaudeThinkingReplayCacheMaxTurnsPerSession || int64(claudeThinkingReplayEntryBytes(cloned)) > ScaleCacheLimit(ClaudeThinkingReplayCacheMaxBytesPerSession) {
 		if len(cloned) == 0 {
 			break
 		}
@@ -412,7 +412,7 @@ func claudeThinkingReplayKVKey(modelFamily, sessionKey string) string {
 }
 
 func validClaudeThinkingReplayContent(content []byte) bool {
-	if len(content) == 0 || len(content) > ClaudeThinkingReplayCacheMaxBytesPerSession || !ojson.ValidBytes(content) {
+	if len(content) == 0 || int64(len(content)) > ScaleCacheLimit(ClaudeThinkingReplayCacheMaxBytesPerSession) || !ojson.ValidBytes(content) {
 		return false
 	}
 	root := util.ParseGJSONBytesNoCopy(content)
@@ -437,7 +437,7 @@ func claudeThinkingReplayCanonicalJSON(raw []byte) ([]byte, bool) {
 }
 
 func enforceClaudeThinkingReplayLimitsLocked() {
-	for len(claudeThinkingReplayEntries) > ClaudeThinkingReplayCacheMaxEntries || claudeThinkingReplayTotalBytes > ClaudeThinkingReplayCacheMaxTotalBytes {
+	for int64(len(claudeThinkingReplayEntries)) > ScaleCacheLimit(ClaudeThinkingReplayCacheMaxEntries) || int64(claudeThinkingReplayTotalBytes) > ScaleCacheLimit(ClaudeThinkingReplayCacheMaxTotalBytes) {
 		if len(claudeThinkingReplayEntries) == 0 {
 			claudeThinkingReplayTotalBytes = 0
 			return

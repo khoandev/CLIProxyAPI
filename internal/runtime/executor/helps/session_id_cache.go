@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cache"
 	homekv "github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 )
 
@@ -37,6 +38,12 @@ var currentClaudeIDKVClient = func() (claudeIDKVClient, bool, error) {
 const (
 	sessionIDTTL                = time.Hour
 	sessionIDCacheCleanupPeriod = 15 * time.Minute
+
+	// sessionIDCacheMaxEntries bounds the number of session IDs the cache
+	// keeps. The key is derived from the credential key, so the number of
+	// entries follows the number of credentials, but a client controlled key
+	// must not be able to grow the map without limit.
+	sessionIDCacheMaxEntries = 1024
 )
 
 func startSessionIDCacheCleanup() {
@@ -139,6 +146,9 @@ func CachedSessionIDRequired(ctx context.Context, apiKey string) (string, error)
 	}
 	entry.expire = now.Add(sessionIDTTL)
 	sessionIDCache[key] = entry
+	cache.TrimExpiredEntries(sessionIDCache, sessionIDCacheMaxEntries, func(entry sessionIDCacheEntry) time.Time {
+		return entry.expire
+	}, now)
 	sessionIDCacheMu.Unlock()
 	return entry.value, nil
 }

@@ -41,6 +41,23 @@ server:
   # -1 (or any negative) disables the cap; positive values set the exact cap.
   max-in-flight-requests: 0
 
+  # Memory budget of the in-process caches (signatures, reasoning replay,
+  # thinking replay, web search results). The caches hold their content until
+  # a TTL expires, so a long running server keeps a large amount of them.
+  # Default: 0 (automatic) - the budget is derived from the memory limit of
+  # the host (one eighth of it), so a small host keeps a smaller cache. When no
+  # limit is visible the per cache defaults stay in place. A positive value
+  # sets the budget explicitly, capped at the sum of the per cache defaults.
+  cache-budget-bytes: 0
+
+  # Derive the per request memory limits from the memory limit of the host
+  # instead of accepting them without a bound. When enabled and
+  # max-request-body-bytes is 0, the request body limit becomes a quarter of
+  # the memory limit (at least 8 MiB, at most 256 MiB), and the deferred
+  # upstream request bodies keep at most that much per request.
+  # Default: false - the request body stays unlimited.
+  strict-memory-limits: false
+
   # Negotiated compression of downstream HTTP responses (including SSE streams).
   # Responses are compressed only when the client advertises zstd or gzip in
   # Accept-Encoding; WebSocket upgrades are never wrapped. Encoder memory is

@@ -108,7 +108,7 @@ func CacheClaudeWebSearchResultBestEffort(ctx context.Context, sessionKey, toolU
 	if limit <= 0 {
 		limit = defaultClaudeWebSearchResultLimit
 	}
-	if len(content) > claudeWebSearchResultMaxEntryBytes {
+	if int64(len(content)) > ScaleCacheLimit(claudeWebSearchResultMaxEntryBytes) {
 		// The block is too large to keep without endangering the host.
 		return false
 	}
@@ -132,7 +132,7 @@ func CacheClaudeWebSearchResultBestEffort(ctx context.Context, sessionKey, toolU
 	}
 	claudeWebSearchResultIndex[key] = claudeWebSearchResultOrder.PushFront(entry)
 	claudeWebSearchResultTotalBytes += int64(len(entry.content))
-	for claudeWebSearchResultOrder.Len() > limit || claudeWebSearchResultTotalBytes > claudeWebSearchResultMaxTotalBytes {
+	for claudeWebSearchResultOrder.Len() > limit || int64(claudeWebSearchResultTotalBytes) > ScaleCacheLimit(claudeWebSearchResultMaxTotalBytes) {
 		oldest := claudeWebSearchResultOrder.Back()
 		if oldest == nil {
 			break

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cache"
 	homekv "github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 )
 
@@ -26,6 +27,12 @@ var (
 const (
 	userIDTTL                = time.Hour
 	userIDCacheCleanupPeriod = 15 * time.Minute
+
+	// userIDCacheMaxEntries bounds the number of user IDs the cache keeps. The
+	// key is derived from the credential key, so the number of entries follows
+	// the number of credentials, but a client controlled key must not be able
+	// to grow the map without limit.
+	userIDCacheMaxEntries = 1024
 )
 
 func startUserIDCacheCleanup() {
@@ -141,6 +148,9 @@ func CachedUserIDRequired(ctx context.Context, apiKey string) (string, error) {
 	}
 	entry.expire = now.Add(userIDTTL)
 	userIDCache[key] = entry
+	cache.TrimExpiredEntries(userIDCache, userIDCacheMaxEntries, func(entry userIDCacheEntry) time.Time {
+		return entry.expire
+	}, now)
 	userIDCacheMu.Unlock()
 	return entry.value, nil
 }

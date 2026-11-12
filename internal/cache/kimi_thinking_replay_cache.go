@@ -288,7 +288,7 @@ func readOrReserveKimiThinkingReplayHomeValue(ctx context.Context, client kimiTh
 			return nil, errGet
 		}
 		if found {
-			if len(raw) > kimiThinkingReplayCacheMaxSerializedBytes {
+			if int64(len(raw)) > ScaleCacheLimit(kimiThinkingReplayCacheMaxSerializedBytes) {
 				return nil, fmt.Errorf("kimi thinking replay value exceeds size limit")
 			}
 			return raw, nil
@@ -317,7 +317,7 @@ func marshalKimiThinkingReplayHomeValue(generation string, deleted bool, content
 }
 
 func decodeKimiThinkingReplayHomeValue(raw []byte) ([]byte, string, bool, bool) {
-	if len(raw) == 0 || len(raw) > kimiThinkingReplayCacheMaxSerializedBytes || !ojson.ValidBytes(raw) {
+	if len(raw) == 0 || int64(len(raw)) > ScaleCacheLimit(kimiThinkingReplayCacheMaxSerializedBytes) || !ojson.ValidBytes(raw) {
 		return nil, "", false, false
 	}
 	root := util.ParseGJSONBytesNoCopy(raw)
@@ -373,7 +373,7 @@ func kimiThinkingReplayKVKey(modelFamily, sessionKey string) string {
 }
 
 func validKimiThinkingReplayContent(content []byte) bool {
-	if len(content) == 0 || len(content) > KimiThinkingReplayCacheMaxBytesPerEntry || !ojson.ValidBytes(content) {
+	if len(content) == 0 || int64(len(content)) > ScaleCacheLimit(KimiThinkingReplayCacheMaxBytesPerEntry) || !ojson.ValidBytes(content) {
 		return false
 	}
 	root := util.ParseGJSONBytesNoCopy(content)
@@ -381,7 +381,7 @@ func validKimiThinkingReplayContent(content []byte) bool {
 }
 
 func enforceKimiThinkingReplayLimitsLocked() {
-	for len(kimiThinkingReplayEntries) > KimiThinkingReplayCacheMaxEntries || kimiThinkingReplayTotalBytes > KimiThinkingReplayCacheMaxTotalBytes {
+	for int64(len(kimiThinkingReplayEntries)) > ScaleCacheLimit(KimiThinkingReplayCacheMaxEntries) || int64(kimiThinkingReplayTotalBytes) > ScaleCacheLimit(KimiThinkingReplayCacheMaxTotalBytes) {
 		if len(kimiThinkingReplayEntries) == 0 {
 			kimiThinkingReplayTotalBytes = 0
 			return

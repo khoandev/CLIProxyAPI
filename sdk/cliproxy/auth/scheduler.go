@@ -78,7 +78,24 @@ type modelScheduler struct {
 	priorityOrder   []int
 	readyByPriority map[int]*readyBucket
 	blocked         cooldownQueue
+	// lastUsedAt records when the shard was last requested. It drives the
+	// eviction of the shards a client created by asking for model names that
+	// no auth supports.
+	lastUsedAt time.Time
 }
+
+var (
+	// maxModelShardsPerProvider bounds the number of model shards one provider
+	// keeps. A client can ask for any model name, so without a bound the shard
+	// map grows with the number of distinct names it sends.
+	maxModelShardsPerProvider = 512
+
+	// modelShardIdleTTL is how long an unused model shard is kept. A shard
+	// without auth entries holds no scheduling state, so dropping it loses
+	// nothing: the shard is rebuilt from the provider auths when the model is
+	// requested again.
+	modelShardIdleTTL = 30 * time.Minute
+)
 
 // scheduledAuth stores the runtime scheduling state for a single auth inside a model shard.
 type scheduledAuth struct {
@@ -370,6 +387,10 @@ func (s *authScheduler) rebuild(auths []*Auth) {
 	}
 }
 
+// schedulerNowFunc returns the current time. The tests replace it to drive the
+// idle timeouts of the model shards without waiting for them.
+var schedulerNowFunc = time.Now
+
 // upsertAuth incrementally synchronizes one auth into the scheduler (lifecycle/update).
 func (s *authScheduler) upsertAuth(auth *Auth) {
 	if s == nil {
@@ -377,7 +398,7 @@ func (s *authScheduler) upsertAuth(auth *Auth) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.upsertAuthLifecycleLocked(auth, time.Now())
+	s.upsertAuthLifecycleLocked(auth, schedulerNowFunc())
 }
 
 // upsertAuthResult updates scheduler state after a request result.
@@ -1014,6 +1035,10 @@ func (s *authScheduler) upsertAuthLifecycleLocked(auth *Auth, now time.Time) {
 	meta := buildScheduledAuthMetaWithModelSet(auth, supportedModelSetForAuth(auth.ID), regEpoch)
 	s.authProviders[authID] = providerKey
 	providerState.upsertAuthForModelsLocked(meta, nil, true, now)
+	// The credential refresh loop upserts the auths periodically, so this is
+	// the reconcile point that drops the model shards a client created by
+	// asking for model names that no auth supports.
+	providerState.pruneModelShardsLocked(now)
 }
 
 // isCredentialBlocked reports whether an auth is blocked at the credential level (affecting all models).
@@ -1305,12 +1330,17 @@ func (p *providerScheduler) ensureModelLocked(modelKey string, now time.Time) *m
 	modelKey = canonicalModelLookupKey(modelKey)
 	if shard, ok := p.modelShards[modelKey]; ok && shard != nil {
 		shard.promoteExpiredLocked(now)
+		shard.lastUsedAt = now
 		return shard
+	}
+	if len(p.modelShards) >= maxModelShardsPerProvider {
+		p.pruneModelShardsLocked(now)
 	}
 	shard := &modelScheduler{
 		modelKey:        modelKey,
 		entries:         make(map[string]*scheduledAuth),
 		readyByPriority: make(map[int]*readyBucket),
+		lastUsedAt:      now,
 	}
 	for _, meta := range p.auths {
 		if meta == nil || !meta.supportsModel(modelKey) {
@@ -1320,6 +1350,65 @@ func (p *providerScheduler) ensureModelLocked(modelKey string, now time.Time) *m
 	}
 	p.modelShards[modelKey] = shard
 	return shard
+}
+
+// pruneModelShardsLocked drops the model shards that are not needed anymore.
+//
+// A client can request any model name, so the shard map would otherwise grow
+// with the number of distinct names it sends. A shard without auth entries
+// carries no scheduling state, so dropping it loses nothing: the shard is
+// rebuilt from the provider auths when the model is requested again.
+//
+// Shards that still hold auth entries are kept, because dropping them would
+// lose the cooldown deadline of their auths.
+func (p *providerScheduler) pruneModelShardsLocked(now time.Time) {
+	if p == nil {
+		return
+	}
+	for key, shard := range p.modelShards {
+		if shard == nil {
+			delete(p.modelShards, key)
+			continue
+		}
+		if len(shard.entries) > 0 {
+			continue
+		}
+		if now.Sub(shard.lastUsedAt) >= modelShardIdleTTL {
+			delete(p.modelShards, key)
+		}
+	}
+	// The map can still be over the cap when the client keeps sending new
+	// model names faster than the idle timeout expires. Drop the least
+	// recently used shards that hold no entries until there is room again.
+	for len(p.modelShards) >= maxModelShardsPerProvider {
+		key, ok := p.leastRecentlyUsedEmptyShardLocked()
+		if !ok {
+			return
+		}
+		delete(p.modelShards, key)
+	}
+}
+
+// leastRecentlyUsedEmptyShardLocked returns the key of the shard that holds no
+// auth entries and was used the longest time ago.
+func (p *providerScheduler) leastRecentlyUsedEmptyShardLocked() (string, bool) {
+	var (
+		bestKey string
+		bestAt  time.Time
+		found   bool
+	)
+	for key, shard := range p.modelShards {
+		if shard == nil {
+			return key, true
+		}
+		if len(shard.entries) > 0 {
+			continue
+		}
+		if !found || shard.lastUsedAt.Before(bestAt) {
+			bestKey, bestAt, found = key, shard.lastUsedAt, true
+		}
+	}
+	return bestKey, found
 }
 
 // supportsModel reports whether the auth metadata currently supports modelKey.

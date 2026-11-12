@@ -75,12 +75,6 @@ func StartServiceWithPluginHost(cfg *config.Config, configPath string, localPass
 	}
 }
 
-// StartServiceBackground starts the proxy service in a background goroutine
-// and returns a cancel function for shutdown and a done channel.
-func StartServiceBackground(cfg *config.Config, configPath string, localPassword string) (cancel func(), done <-chan struct{}) {
-	return StartServiceBackgroundWithPluginHost(cfg, configPath, localPassword, nil)
-}
-
 // StartServiceBackgroundWithPluginHost starts the proxy service with a shared plugin host.
 func StartServiceBackgroundWithPluginHost(cfg *config.Config, configPath string, localPassword string, host *pluginhost.Host, serverOptions ...api.ServerOption) (cancel func(), done <-chan struct{}) {
 	// Keep the resident set below the container memory ceiling so the kernel

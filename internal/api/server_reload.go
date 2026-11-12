@@ -124,6 +124,8 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 	}
 
 	applySignatureCacheConfig(oldCfg, cfg)
+	applyCacheBudgetConfig(oldCfg, cfg)
+	applyStrictMemoryLimitsConfig(cfg)
 	applyClaudeToolSearchConfig(cfg)
 
 	if oldCfg != nil && !reflect.DeepEqual(oldCfg.Antigravity.ConnectionPool, cfg.Antigravity.ConnectionPool) {
@@ -281,6 +283,27 @@ func configuredSignatureCacheEnabled(cfg *config.Config) bool {
 		return *cfg.AntigravitySignatureCacheEnabled
 	}
 	return true
+}
+
+// applyCacheBudgetConfig applies the cache budget of the configuration. The
+// budget bounds the memory the in-process caches may keep, so it follows the
+// memory limit of the host unless the operator sets it explicitly.
+func applyCacheBudgetConfig(oldCfg, cfg *config.Config) {
+	var newVal int64
+	if cfg != nil {
+		newVal = cfg.CacheBudgetBytes
+	}
+	if oldCfg == nil {
+		cache.SetCacheBudget(newVal)
+		return
+	}
+	var oldVal int64
+	if oldCfg != nil {
+		oldVal = oldCfg.CacheBudgetBytes
+	}
+	if oldVal != newVal {
+		cache.SetCacheBudget(newVal)
+	}
 }
 
 func applySignatureCacheConfig(oldCfg, cfg *config.Config) {

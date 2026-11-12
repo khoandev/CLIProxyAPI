@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	homekv "github.com/router-for-me/CLIProxyAPI/v8/internal/home"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -28,6 +29,11 @@ const (
 	claudeDeviceProfileTTL                 = 7 * 24 * time.Hour
 	claudeDeviceProfileLockTTL             = 5 * time.Second
 	claudeDeviceProfileCleanupPeriod       = time.Hour
+
+	// claudeDeviceProfileCacheMaxEntries bounds the number of device profiles
+	// the cache keeps. The entries live for a week, so an unbounded map would
+	// hold every profile a client ever asked for.
+	claudeDeviceProfileCacheMaxEntries = 512
 )
 
 var (
@@ -476,6 +482,9 @@ func resolveClaudeDeviceProfileLocal(auth *cliproxyauth.Auth, apiKey string, hea
 			profile: candidate,
 			expire:  now.Add(claudeDeviceProfileTTL),
 		}
+		cache.TrimExpiredEntries(claudeDeviceProfileCache, claudeDeviceProfileCacheMaxEntries, func(entry claudeDeviceProfileCacheEntry) time.Time {
+			return entry.expire
+		}, now)
 		claudeDeviceProfileCacheMu.Unlock()
 		return candidate
 	}

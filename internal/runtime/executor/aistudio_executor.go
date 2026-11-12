@@ -179,7 +179,7 @@ func (e *AIStudioExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth,
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return resp, err
 	}
-	helps.RecordAPIResponseMetadata(ctx, e.cfg, wsResp.Status, wsResp.Headers.Clone())
+	helps.RecordAPIResponseMetadata(ctx, e.cfg, wsResp.Status, wsResp.Headers)
 	reporter.StartResponseTTFT()
 	if len(wsResp.Body) > 0 {
 		reporter.MarkFirstResponseByte()
@@ -290,7 +290,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 	if firstEvent.Status > 0 && (firstEvent.Status < http.StatusOK || firstEvent.Status >= http.StatusMultipleChoices) {
 		metadataLogged := false
 		if firstEvent.Status > 0 {
-			helps.RecordAPIResponseMetadata(ctx, e.cfg, firstEvent.Status, firstEvent.Headers.Clone())
+			helps.RecordAPIResponseMetadata(ctx, e.cfg, firstEvent.Status, firstEvent.Headers)
 			reporter.StartResponseTTFT()
 			metadataLogged = true
 		}
@@ -315,7 +315,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 				break
 			}
 			if !metadataLogged && event.Status > 0 {
-				helps.RecordAPIResponseMetadata(ctx, e.cfg, event.Status, event.Headers.Clone())
+				helps.RecordAPIResponseMetadata(ctx, e.cfg, event.Status, event.Headers)
 				reporter.StartResponseTTFT()
 				metadataLogged = true
 			}
@@ -439,7 +439,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 			switch event.Type {
 			case wsrelay.MessageTypeStreamStart:
 				if !metadataLogged && event.Status > 0 {
-					helps.RecordAPIResponseMetadata(ctx, e.cfg, event.Status, event.Headers.Clone())
+					helps.RecordAPIResponseMetadata(ctx, e.cfg, event.Status, event.Headers)
 					reporter.StartResponseTTFT()
 					metadataLogged = true
 				}
@@ -457,7 +457,7 @@ func (e *AIStudioExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 				return false
 			case wsrelay.MessageTypeHTTPResp:
 				if !metadataLogged && event.Status > 0 {
-					helps.RecordAPIResponseMetadata(ctx, e.cfg, event.Status, event.Headers.Clone())
+					helps.RecordAPIResponseMetadata(ctx, e.cfg, event.Status, event.Headers)
 					reporter.StartResponseTTFT()
 					metadataLogged = true
 				}
@@ -577,7 +577,7 @@ func (e *AIStudioExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.A
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return cliproxyexecutor.Response{}, err
 	}
-	helps.RecordAPIResponseMetadata(ctx, e.cfg, resp.Status, resp.Headers.Clone())
+	helps.RecordAPIResponseMetadata(ctx, e.cfg, resp.Status, resp.Headers)
 	if len(resp.Body) > 0 {
 		helps.AppendAPIResponseChunk(ctx, e.cfg, resp.Body)
 	}

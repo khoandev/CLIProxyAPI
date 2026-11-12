@@ -323,7 +323,7 @@ func enforceSignatureCacheLimitsLocked(sc *groupCache) {
 	if sc == nil {
 		return
 	}
-	for len(sc.entries) > SignatureCacheMaxEntriesPerGroup || sc.bytes > SignatureCacheMaxBytesPerGroup {
+	for int64(len(sc.entries)) > ScaleCacheLimit(SignatureCacheMaxEntriesPerGroup) || int64(sc.bytes) > ScaleCacheLimit(SignatureCacheMaxBytesPerGroup) {
 		if len(sc.entries) == 0 {
 			sc.resetLocked()
 			return
@@ -347,7 +347,7 @@ func enforceSignatureCacheLimitsLocked(sc *groupCache) {
 func enforceSignatureGlobalLimits() {
 	for {
 		bytesUsed, entriesUsed := signatureGlobalUsage()
-		if bytesUsed <= signatureCacheMaxTotalBytes && entriesUsed <= signatureCacheMaxTotalEntries {
+		if bytesUsed <= ScaleCacheLimit(signatureCacheMaxTotalBytes) && entriesUsed <= ScaleCacheLimit(signatureCacheMaxTotalEntries) {
 			return
 		}
 		if !evictLeastRecentlyUsedGroupEntry() {

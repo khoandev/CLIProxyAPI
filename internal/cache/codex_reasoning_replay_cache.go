@@ -231,7 +231,7 @@ func trimCodexReasoningReplayItems(items [][]byte) [][]byte {
 				turnStarts = append(turnStarts, index)
 			}
 		}
-		if len(turnStarts) <= CodexReasoningReplayCacheMaxTurnsPerEntry && totalBytes <= CodexReasoningReplayCacheMaxBytesPerEntry {
+		if len(turnStarts) <= CodexReasoningReplayCacheMaxTurnsPerEntry && int64(totalBytes) <= ScaleCacheLimit(CodexReasoningReplayCacheMaxBytesPerEntry) {
 			return items
 		}
 		if len(turnStarts) <= 1 {
@@ -511,7 +511,7 @@ func codexReasoningReplayEntryBytes(items [][]byte) int {
 // enforceCodexReasoningReplayLimitsLocked evicts the oldest entries until the
 // cache fits both the entry count and the aggregate byte budget.
 func enforceCodexReasoningReplayLimitsLocked() {
-	for len(codexReasoningReplayEntries) > CodexReasoningReplayCacheMaxEntries || codexReasoningReplayTotalBytes > CodexReasoningReplayCacheMaxTotalBytes {
+	for int64(len(codexReasoningReplayEntries)) > ScaleCacheLimit(CodexReasoningReplayCacheMaxEntries) || int64(codexReasoningReplayTotalBytes) > ScaleCacheLimit(CodexReasoningReplayCacheMaxTotalBytes) {
 		if len(codexReasoningReplayEntries) == 0 {
 			codexReasoningReplayTotalBytes = 0
 			return

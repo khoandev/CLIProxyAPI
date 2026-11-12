@@ -248,14 +248,16 @@ func (e *OpenAICompatExecutor) executeWithCredentials(ctx context.Context, auth 
 			log.Errorf("openai compat executor: close response body error: %v", errClose)
 		}
 	}()
-	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header)
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		b, errRead := io.ReadAll(httpResp.Body)
 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 		if errRead != nil {
 			helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 		}
-		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+		if log.IsLevelEnabled(log.DebugLevel) {
+			helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+		}
 		if helps.IsUnsupportedReasoningParamError(httpResp.StatusCode, b) {
 			stripped := helps.StripReasoningEffortParameters(translated)
 			if !bytes.Equal(stripped, translated) {
@@ -292,13 +294,15 @@ func (e *OpenAICompatExecutor) executeWithCredentials(ctx context.Context, auth 
 					retryResp, errDo := httpClient.Do(retryReq)
 					if errDo == nil {
 						httpResp = retryResp
-						helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+						helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header)
 						if httpResp.StatusCode >= 200 && httpResp.StatusCode < 300 {
 							goto openaiCompatReadExecuteResponse
 						}
 						b, _ = io.ReadAll(httpResp.Body)
 						helps.AppendAPIResponseChunk(ctx, e.cfg, b)
-						helps.LogWithRequestID(ctx).Debugf("request error after unsupported param retry, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+						if log.IsLevelEnabled(log.DebugLevel) {
+							helps.LogWithRequestID(ctx).Debugf("request error after unsupported param retry, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+						}
 					} else {
 						helps.RecordAPIResponseError(ctx, e.cfg, errDo)
 						return resp, errDo
@@ -411,7 +415,7 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 			log.Errorf("openai compat executor: close response body error: %v", errClose)
 		}
 	}()
-	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header)
 
 	body, errRead := io.ReadAll(httpResp.Body)
 	helps.AppendAPIResponseChunk(ctx, e.cfg, body)
@@ -422,7 +426,9 @@ func (e *OpenAICompatExecutor) executeImages(ctx context.Context, auth *cliproxy
 	}
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
+		if log.IsLevelEnabled(log.DebugLevel) {
+			helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
+		}
 		err = newOpenAICompatStatusError(httpResp.StatusCode, httpResp.Header, body)
 		return resp, err
 	}
@@ -572,14 +578,16 @@ func (e *OpenAICompatExecutor) executeStreamWithCredentials(ctx context.Context,
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return nil, err
 	}
-	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header)
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		b, errRead := io.ReadAll(httpResp.Body)
 		helps.AppendAPIResponseChunk(ctx, e.cfg, b)
 		if errRead != nil {
 			helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 		}
-		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+		if log.IsLevelEnabled(log.DebugLevel) {
+			helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+		}
 		if helps.IsUnsupportedReasoningParamError(httpResp.StatusCode, b) {
 			stripped := helps.StripReasoningEffortParameters(translated)
 			if !bytes.Equal(stripped, translated) {
@@ -619,11 +627,13 @@ func (e *OpenAICompatExecutor) executeStreamWithCredentials(ctx context.Context,
 					retryResp, errDo := httpClient.Do(retryReq)
 					if errDo == nil {
 						httpResp = retryResp
-						helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+						helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header)
 						if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 							b, _ = io.ReadAll(httpResp.Body)
 							helps.AppendAPIResponseChunk(ctx, e.cfg, b)
-							helps.LogWithRequestID(ctx).Debugf("request error after unsupported param retry, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+							if log.IsLevelEnabled(log.DebugLevel) {
+								helps.LogWithRequestID(ctx).Debugf("request error after unsupported param retry, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), b))
+							}
 							if errClose := httpResp.Body.Close(); errClose != nil {
 								log.Errorf("openai compat executor: close response body error: %v", errClose)
 							}
@@ -937,7 +947,7 @@ func (e *OpenAICompatExecutor) executeImagesStream(ctx context.Context, auth *cl
 		helps.RecordAPIResponseError(ctx, e.cfg, err)
 		return nil, err
 	}
-	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header)
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		body, errRead := io.ReadAll(httpResp.Body)
@@ -949,7 +959,9 @@ func (e *OpenAICompatExecutor) executeImagesStream(ctx context.Context, auth *cl
 			helps.RecordAPIResponseError(ctx, e.cfg, errRead)
 			return nil, errRead
 		}
-		helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
+		if log.IsLevelEnabled(log.DebugLevel) {
+			helps.LogWithRequestID(ctx).Debugf("request error, error status: %d, error message: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
+		}
 		return nil, statusErr{code: httpResp.StatusCode, msg: string(body)}
 	}
 
@@ -1686,7 +1698,7 @@ func (e *OpenAICompatExecutor) executeVideo(ctx context.Context, auth *cliproxya
 			log.Errorf("openai compat executor: close video response body error: %v", errClose)
 		}
 	}()
-	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header)
 
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
@@ -1696,7 +1708,9 @@ func (e *OpenAICompatExecutor) executeVideo(ctx context.Context, auth *cliproxya
 	helps.AppendAPIResponseChunk(ctx, e.cfg, body)
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		helps.LogWithRequestID(ctx).Debugf("video request error, status: %d, body: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
+		if log.IsLevelEnabled(log.DebugLevel) {
+			helps.LogWithRequestID(ctx).Debugf("video request error, status: %d, body: %s", httpResp.StatusCode, helps.SummarizeErrorBody(httpResp.Header.Get("Content-Type"), body))
+		}
 		return resp, openAICompatStatusErr(httpResp.StatusCode, string(body))
 	}
 

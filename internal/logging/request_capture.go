@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -31,6 +32,39 @@ const (
 	maxDeferredErrorsPerAttempt    = 8
 	maxDeferredHeaderEntries       = 64
 )
+
+// deferredAPIRequestBodyMaxBytes holds the effective limit of the deferred
+// upstream request bodies. It holds zero when the default limit applies.
+var deferredAPIRequestBodyMaxBytes atomic.Int64
+
+// SetDeferredAPIRequestBodyMaxBytes lowers the limit of the deferred upstream
+// request bodies. A value of zero or less restores the default limit.
+//
+// The deferred body is a bounded subslice of the outbound payload, so lowering
+// the limit does not copy the body, it only keeps less of it for the error
+// log.
+func SetDeferredAPIRequestBodyMaxBytes(limit int64) {
+	if limit <= 0 {
+		deferredAPIRequestBodyMaxBytes.Store(0)
+		return
+	}
+	deferredAPIRequestBodyMaxBytes.Store(limit)
+}
+
+// deferredAPIRequestBodyLimit returns the effective limit of the deferred
+// upstream request bodies.
+func deferredAPIRequestBodyLimit() int64 {
+	if limit := deferredAPIRequestBodyMaxBytes.Load(); limit > 0 {
+		return limit
+	}
+	return MaxDeferredAPIRequestBodyBytes
+}
+
+// DeferredAPIRequestBodyMaxBytes returns the effective limit of the deferred
+// upstream request bodies per HTTP request.
+func DeferredAPIRequestBodyMaxBytes() int64 {
+	return deferredAPIRequestBodyLimit()
+}
 
 type deferredAPIRequestCaptureDisabledKey struct{}
 type deferredAPICaptureKey struct{}
@@ -222,7 +256,7 @@ func (c *DeferredAPICapture) recordRequestWithReplace(body []byte, replacePendin
 				c.requestBytes = 0
 			}
 			capturedAt := time.Now()
-			remaining := MaxDeferredAPIRequestBodyBytes - c.requestBytes
+			remaining := int(deferredAPIRequestBodyLimit()) - c.requestBytes
 			if remaining < 0 {
 				remaining = 0
 			}
@@ -252,7 +286,7 @@ func (c *DeferredAPICapture) recordRequestWithReplace(body []byte, replacePendin
 		return nil, c.requestBytes, false, false
 	}
 	capturedAt := time.Now()
-	remaining := MaxDeferredAPIRequestBodyBytes - c.requestBytes
+	remaining := int(deferredAPIRequestBodyLimit()) - c.requestBytes
 	if remaining < 0 {
 		remaining = 0
 	}
