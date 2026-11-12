@@ -550,6 +550,63 @@ func TestMaskingChunkBoundaryNotCached(t *testing.T) {
 	}
 }
 
+// TestMaskingLeavesManagementResponsesUntouched pins that management responses
+// are never rewritten: config payloads carry upstream base URLs and credential
+// names verbatim, and masking them corrupts the config read back from the API.
+func TestMaskingLeavesManagementResponsesUntouched(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const payload = "base-url: https://p01--workbuddy--xcrfjp4d6g68.code.run/v1\nname: workbuddy\n"
+	paths := []string{
+		"/v0/management/config",
+		"/v8/management/config",
+		"/v0/management/auth-files",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			r := gin.New()
+			r.Use(MaskingMiddleware())
+			r.GET(path, func(c *gin.Context) {
+				c.String(http.StatusOK, payload)
+			})
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+			if got := rec.Body.String(); got != payload {
+				t.Errorf("body = %q, want the management payload unchanged", got)
+			}
+		})
+	}
+}
+
+// TestMaskingAppliesToProxyAPIAliases pins that every client-facing proxy API
+// family is still masked after management paths were excluded.
+func TestMaskingAppliesToProxyAPIAliases(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	paths := []string{
+		"/v1/chat/completions",
+		"/v1beta/models/gemini-2.5-pro:generateContent",
+		"/openai/v1/videos",
+		"/backend-api/codex/responses",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			r := gin.New()
+			r.Use(MaskingMiddleware())
+			r.POST(path, func(c *gin.Context) {
+				c.String(http.StatusOK, "workbuddy")
+			})
+
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+
+			if got, want := rec.Body.String(), "llmgate"; got != want {
+				t.Errorf("body = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // TestMaskNeedleVariantsCoverEveryRule pins the response prefilter invariant:
 // every rule source contains one of its family's cased needle variants, so the
 // variant scan never misses a byte sequence a rule would rewrite.

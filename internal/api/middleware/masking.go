@@ -150,7 +150,7 @@ func newMaskProfile(domain, token string) maskProfile {
 }
 
 // MaskingMiddleware wraps responses and rewrites every third-party brand so the
-// client only sees this service: on all responses vendor domains (kiraai.vn,
+// client only sees this service: on proxy API responses, vendor domains (kiraai.vn,
 // opencode2api, www.workbuddy.ai, copilot.tencent.com) become llmgate.app, the
 // vendor product names (WorkBuddy, CodeBuddy) become LLMGate, and Kira AI becomes
 // Model AI; kiro becomes Claude or OpenAI branding for masked models, and
@@ -158,11 +158,29 @@ func newMaskProfile(domain, token string) maskProfile {
 // writer, so a chunk is scanned once per distinct root instead of once per
 // middleware. The replacement applies to both streaming and non-streaming
 // responses.
+//
+// Only proxy API routes (/v1, /v1beta and their aliases) are rewritten.
+// Management and control-plane responses carry operator configuration verbatim
+// (upstream base URLs, credential file names), and masking those values corrupts
+// the config that is read back and saved from the management API.
 func MaskingMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if !isMaskableAPIPath(c) {
+			c.Next()
+			return
+		}
 		c.Writer = &maskingResponseWriter{ResponseWriter: c.Writer, ctx: c}
 		c.Next()
 	}
+}
+
+// isMaskableAPIPath reports whether the request targets a client-facing proxy API
+// route. Brand masking must never apply to management or control-plane paths.
+func isMaskableAPIPath(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	return isProxyAPIErrorPath(c.Request.URL.Path)
 }
 
 // maskRequestHints holds the request facts both rule checks need, resolved once.
