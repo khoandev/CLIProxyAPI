@@ -246,7 +246,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	touchedPayloadPaths := helps.ApplyPayloadConfigWithTrackedPathsDoc(
 		e.cfg, baseModel, to.String(), from.String(), "", doc, stripTranslatedDefaultMaxTokens(from, originalPayload, originalTranslated),
 		helps.PayloadRequestedModel(opts, req.Model), helps.PayloadRequestPath(opts), opts.Headers,
-		"diagnostics",
+		"diagnostics", "betas",
 	)
 	if touchedPayloadPaths["diagnostics"] {
 		diagnosticsState = claudeDiagnosticsRequestState{}
@@ -289,6 +289,10 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		claudeSessionID,
 	); errHeaders != nil {
 		return nil, errHeaders
+	}
+	threadBetas, errThread := e.prepareClaudeThreadBetas(ctx, httpReq, auth, bodyForUpstream, extraBetas, touchedPayloadPaths["betas"], incomingHeaders, wirePolicy.Uncloak, opts.Metadata, req.Metadata)
+	if errThread != nil {
+		return nil, errThread
 	}
 	fastRequest := isAnthropicUpstreamBase(baseURL) && claudeRequestIsFast(httpReq, bodyForUpstream)
 	authID, authLabel, authType, authValue := claudeAuthLogIdentity(auth)
@@ -430,9 +434,13 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			}
 		}
 
+		streamBody := threadBetas.StreamReader(decodedBody, func(messageID string) {
+			commitClaudeContinuity(diagnosticsState, messageID, helps.HeaderValueCaseInsensitive(httpResp.Header, "request-id"))
+			e.rememberClaudeOAuthToolAliases(body, oauthToolNamesReverseMap, messageID)
+		})
 		// If the response target is Claude, directly forward complete SSE events without translation.
 		if responseFormat == to {
-			scanner := bufio.NewScanner(decodedBody)
+			scanner := bufio.NewScanner(streamBody)
 			scanBuf := helps.AcquireScanBuffer()
 			scanner.Buffer(scanBuf, 52_428_800) // 50MB
 			defer helps.ReleaseScanBuffer(scanBuf)
@@ -513,7 +521,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		}
 
 		// For other formats, use translation
-		scanner := bufio.NewScanner(decodedBody)
+		scanner := bufio.NewScanner(streamBody)
 		scanBuf := helps.AcquireScanBuffer()
 		scanner.Buffer(scanBuf, 52_428_800) // 50MB
 		defer helps.ReleaseScanBuffer(scanBuf)
