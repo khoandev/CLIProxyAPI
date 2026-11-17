@@ -3,7 +3,6 @@ package registry
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/MoeForge/moego/json"
 	log "github.com/sirupsen/logrus"
 )
 

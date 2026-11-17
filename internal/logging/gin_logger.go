@@ -23,6 +23,7 @@ var aiAPIPrefixes = []string{
 	"/openai/v1",
 	"/backend-api/codex",
 	"/files",
+	"/muse-code",
 }
 
 const (
