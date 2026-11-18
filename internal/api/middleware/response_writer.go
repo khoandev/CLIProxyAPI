@@ -441,6 +441,15 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 	// before the response body is read for logging.
 	helps.AggregateAPIResponse(c)
 
+	// Local diagnostics must not turn a recovered retry or client cancellation into an error response.
+	capture := w.deferredAPICapture
+	if capture == nil {
+		if value, exists := c.Get(logging.DeferredAPIResponseContextKey); exists {
+			capture, _ = value.(*logging.DeferredAPICapture)
+		}
+	}
+	slicesAPIResponseError = append(slicesAPIResponseError, capture.ResponseDiagnostics()...)
+
 	if w.isStreaming && w.streamWriter != nil {
 		w.streamWriter.SetFirstChunkTimestamp(w.firstChunkTimestamp)
 
@@ -514,7 +523,8 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 	}
 	apiResponse := w.extractAPIResponse(c)
 	if forceLog {
-		if deferredResponse := w.extractDeferredAPIResponse(c); len(deferredResponse) > 0 {
+		// An upstream attempt without a response must not fall back to a synthesized handler error.
+		if deferredResponse := w.extractDeferredAPIResponse(c); len(deferredResponse) > 0 || len(apiRequest) > 0 {
 			apiResponse = deferredResponse
 		}
 	}

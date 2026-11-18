@@ -4,11 +4,13 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/MoeForge/moego/ojson"
 )
 
 func TestXAIWebsocketIDStateStoreEvictsExcessSessions(t *testing.T) {
 	store := &xaiWebsocketIDStateStore{sessions: make(map[string]*xaiWebsocketIDState)}
-	for i := 0; i < codexWebsocketSessionStoreMaxSessions*2; i++ {
+	for i := range codexWebsocketSessionStoreMaxSessions * 2 {
 		state := getXAIWebsocketIDState(store, "session-"+strconv.Itoa(i))
 		if state == nil {
 			t.Fatalf("getXAIWebsocketIDState returned nil")
@@ -55,9 +57,10 @@ func TestXAIWebsocketTranscriptIsBounded(t *testing.T) {
 	}
 	requestPayload := []byte(`{"input":[{"type":"message","role":"user","content":"` + string(item) + `"}]}`)
 	completedPayload := []byte(`{"response":{"output":[{"type":"message","role":"assistant","content":"` + string(item) + `"}]}}`)
+	inputSnapshot := xaiJSONRawMessages(ojson.GetBytes(requestPayload, "input"))
 
-	for i := 0; i < 1000; i++ {
-		state.recordTranscriptTurn(requestPayload, completedPayload, false)
+	for range 1000 {
+		state.recordTranscriptTurn(inputSnapshot, completedPayload, false)
 	}
 
 	state.mu.Lock()
@@ -84,9 +87,10 @@ func TestXAIWebsocketTranscriptTrimKeepsNewestItems(t *testing.T) {
 	state := &xaiWebsocketIDState{downstreamToUpstream: make(map[string]string)}
 
 	// One item per turn, so the item cap is what forces the trim.
-	for i := 0; i < xaiWebsocketTranscriptMaxItems+10; i++ {
+	for i := range xaiWebsocketTranscriptMaxItems + 10 {
 		item := `{"n":` + strconv.Itoa(i) + `}`
-		state.recordTranscriptTurn([]byte(`{"input":[`+item+`]}`), []byte(`{"response":{"output":[]}}`), false)
+		inputSnapshot := xaiJSONRawMessages(ojson.GetBytes([]byte(`{"input":[`+item+`]}`), "input"))
+		state.recordTranscriptTurn(inputSnapshot, []byte(`{"response":{"output":[]}}`), false)
 	}
 
 	state.mu.Lock()

@@ -239,6 +239,7 @@ func (w *FileStreamingLogWriter) Discard() error {
 }
 
 func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
+	apiErrors, diagnostics := splitResponseDiagnostics(w.apiResponseErrors)
 	if errWrite := writeRequestInfoWithBody(logFile, w.url, w.method, w.requestHeaders, w.requestSpool.Bytes(), w.requestSpool.Path(), w.timestamp, "http", inferUpstreamTransport(w.apiRequest, w.apiRequestSource, w.apiResponse, w.apiResponseSource, w.apiWebsocketTimeline, nil, nil), true); errWrite != nil {
 		return errWrite
 	}
@@ -248,7 +249,7 @@ func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
 	if errWrite := writePreformattedAPISectionWithSource(logFile, "=== API REQUEST ===\n", "=== API REQUEST", w.apiRequest, w.apiRequestSource, time.Time{}); errWrite != nil {
 		return errWrite
 	}
-	if errWrite := writeAPIErrorResponses(logFile, w.apiResponseErrors); errWrite != nil {
+	if errWrite := writeAPIErrorResponses(logFile, apiErrors); errWrite != nil {
 		return errWrite
 	}
 	if errWrite := writePreformattedAPISectionWithSource(logFile, "=== API RESPONSE ===\n", "=== API RESPONSE", w.apiResponse, w.apiResponseSource, w.apiResponseTimestamp); errWrite != nil {
@@ -265,7 +266,7 @@ func (w *FileStreamingLogWriter) writeFinalLog(logFile *os.File) error {
 		}
 	}()
 
-	return writeResponseSection(logFile, w.responseStatus, w.statusWritten, w.responseHeaders, responseReader, nil, false)
+	return writeResponseSection(logFile, w.responseStatus, w.statusWritten, w.responseHeaders, responseReader, nil, false, diagnostics)
 }
 
 // NoOpStreamingLogWriter is a no-operation implementation for when logging is disabled.
