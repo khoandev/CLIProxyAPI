@@ -13,6 +13,7 @@ import (
 	"github.com/MoeForge/moego/ojson"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	log "github.com/sirupsen/logrus"
@@ -118,7 +119,8 @@ func (c *websocketConnectionCloser) Close() error {
 }
 
 type codexWebsocketSession struct {
-	sessionID string
+	sessionInstructions helps.CodexInstructionChain
+	sessionID           string
 
 	// lastUsed tracks the last time the session was fetched from the store.
 	// It is guarded by the store mutex.
